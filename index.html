@@ -224,6 +224,37 @@
                 </div>
             </section>
 
+            <!-- Manage Shared Agendas Section -->
+            <section id="manage-shared-agendas" class="mt-8 p-6 bg-white rounded-lg shadow-lg border border-slate-100">
+                <h2 class="text-xl font-bold mb-4 text-slate-900">Gerenciar Agendas Compartilhadas</h2>
+                <p class="text-sm text-slate-600 mb-4">Colabore em agendas com sua equipa. Crie uma nova agenda compartilhada ou carregue uma existente.</p>
+                
+                <div class="mb-6">
+                    <button id="create-new-shared-agenda-btn" class="bg-blue-600 text-white px-6 py-2 rounded-lg shadow-md hover:bg-blue-700 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex items-center gap-2">
+                        Criar Nova Agenda Compartilhada
+                    </button>
+                    <p class="text-xs text-slate-500 mt-2">Gera um novo ID para uma agenda que você pode compartilhar com seu sócio.</p>
+                </div>
+
+                <div class="mb-6">
+                    <label for="shared-agenda-id-input" class="block text-sm font-medium text-slate-700 mb-2">Carregar Agenda Compartilhada Existente</label>
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <input type="text" id="shared-agenda-id-input" placeholder="ID da Agenda Compartilhada" class="flex-grow mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2">
+                        <button id="load-shared-agenda-btn" class="bg-teal-600 text-white px-6 py-2 rounded-lg shadow-md hover:bg-teal-700 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex-shrink-0">
+                            Carregar Agenda
+                        </button>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-2">Insira o ID de uma agenda compartilhada para visualizá-la e colaborar.</p>
+                </div>
+
+                <div>
+                    <button id="back-to-private-agenda-btn" class="bg-gray-500 text-white px-6 py-2 rounded-lg shadow-md hover:bg-gray-600 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex items-center gap-2">
+                        Voltar para Minha Agenda Pessoal
+                    </button>
+                    <p class="text-xs text-slate-500 mt-2">Volta para a sua agenda pessoal, onde você pode gerenciar seus compromissos privados.</p>
+                </div>
+            </section>
+
             <!-- Follow-ups and Unscheduled tasks -->
             <section id="follow-ups" class="mt-8">
                  <h2 class="text-xl font-bold mb-4 text-slate-900">Acompanhamentos e Tarefas Pendentes</h2>
@@ -450,6 +481,12 @@
             const copyFilteredLinkBtn = document.getElementById('copy-filtered-link-btn');
             const copyFeedback = document.getElementById('copy-feedback');
 
+            // Shared Agenda Management elements
+            const createNewSharedAgendaBtn = document.getElementById('create-new-shared-agenda-btn');
+            const loadSharedAgendaBtn = document.getElementById('load-shared-agenda-btn');
+            const sharedAgendaIdInput = document.getElementById('shared-agenda-id-input');
+            const backToPrivateAgendaBtn = document.getElementById('back-to-private-agenda-btn');
+
 
             let currentCategoryColors = { ...defaultCategoryColors };
             let currentCategoryBorders = { ...defaultCategoryBorders };
@@ -479,14 +516,30 @@
                 
                 const dayOrder = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo' ];
                 const sortedDates = uniqueDates.sort((a, b) => {
-                    const dayA = daysOfWeek[new Date(a + 'T00:00:00').getDay()];
-                    const dayB = daysOfWeek[new Date(b + 'T00:00:00').getDay()];
-                    return dayOrder.indexOf(dayA) - dayOrder.indexOf(dayB);
+                    const dateA = new Date(a.date + 'T00:00:00');
+                    const dateB = new Date(b.date + 'T00:00:00');
+                    const dayAIndex = dateA.getDay(); // 0 for Sunday, 1 for Monday, etc.
+                    const dayBIndex = dateB.getDay();
+
+                    // Custom sort order: Monday (1) to Sunday (0)
+                    const getCustomDayIndex = (day) => {
+                        if (day === 0) return 7; // Move Sunday to end
+                        return day;
+                    };
+
+                    const customDayA = getCustomDayIndex(dayAIndex);
+                    const customDayB = getCustomDayIndex(dayBIndex);
+
+                    if (customDayA !== customDayB) {
+                        return customDayA - customDayB;
+                    }
+                    return dateA.getTime() - dateB.getTime(); // Sort by time if on same day
                 });
 
                 sortedDates.forEach(dateStr => {
-                    const dayName = dateToDayMap[dateStr];
-                    const formattedDate = new Date(dateStr + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit'});
+                    const date = new Date(dateStr + 'T00:00:00');
+                    const dayName = daysOfWeek[date.getDay()];
+                    const formattedDate = date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit'});
 
                     const dayColumn = document.createElement('div');
                     dayColumn.className = 'bg-white';
@@ -581,17 +634,18 @@
                         </div>
                         <div class="flex items-center gap-2">
                             <span class="text-xs font-medium px-2 py-1 rounded-full ${bgColorLightClass} ${textColorClass}">${task.category}</span>
-                            ${currentAgendaView === 'private' ? `
+                            ${currentAgendaView === 'private' || (currentAgendaView === 'shared' && task.ownerId === userId) ? `
                             <button data-id="${task.id}" class="edit-task-btn bg-slate-200 text-slate-700 text-xs px-3 py-1 rounded-full hover:bg-slate-300 transition duration-200 ease-in-out transform hover:scale-105 active:scale-95">
                                 Editar
                             </button>
-                            <button data-id="${task.id}" class="delete-task-btn bg-red-500 text-white text-xs px-3 py-1 rounded-full hover:bg-red-600 transition duration-200 ease-in-out transform hover:scale-105 active:scale-95">
+                            <button data-id="${task.id}" class="delete-task-btn bg-red-500 text-white text-xs px-3 py-1 rounded-full hover:bg-red-600 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">
                                 Excluir
                             </button>
                             ` : ''}
                             <button data-activity="${task.activity}" class="suggest-subtasks-btn bg-sky-500 text-white text-xs px-3 py-1 rounded-full hover:bg-sky-600 transition duration-200 ease-in-out transform hover:scale-105 active:scale-95">
                                 ✨ Sugerir Subtarefas
                             </button>
+                            ${currentAgendaView === 'shared' && task.ownerId ? `<span class="text-xs text-slate-500 ml-1">(${task.ownerId === userId ? 'Eu' : 'Sócio'})</span>` : ''}
                         </div>
                     `;
                     taskListContainer.appendChild(taskItem);
@@ -866,7 +920,18 @@
                 statusMessageDisplay.textContent = 'A guardar compromisso...';
                 try {
                     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                    const collectionPath = `/artifacts/${appId}/users/${userId}/agendaTasks`;
+                    let collectionPath;
+                    if (currentAgendaView === 'private') {
+                        collectionPath = `/artifacts/${appId}/users/${userId}/agendaTasks`;
+                    } else if (currentAgendaView === 'shared' && window.currentSharedAgendaId) {
+                        collectionPath = `/artifacts/${appId}/sharedAgendas/${window.currentSharedAgendaId}/tasks`;
+                        task.ownerId = userId; // Add ownerId for shared tasks
+                    } else {
+                        console.error("Modo de agenda desconhecido ou ID de agenda compartilhada ausente.");
+                        statusMessageDisplay.textContent = 'Erro: Modo de agenda desconhecido.';
+                        return;
+                    }
+                    
                     console.log("Firestore Collection Path:", collectionPath);
                     if (task.id) {
                         await setDoc(doc(db, collectionPath, task.id), { ...task, timestamp: serverTimestamp() });
@@ -885,7 +950,16 @@
                 statusMessageDisplay.textContent = 'A eliminar compromisso...';
                 try {
                     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                    const collectionPath = `/artifacts/${appId}/users/${userId}/agendaTasks`;
+                    let collectionPath;
+                    if (currentAgendaView === 'private') {
+                        collectionPath = `/artifacts/${appId}/users/${userId}/agendaTasks`;
+                    } else if (currentAgendaView === 'shared' && window.currentSharedAgendaId) {
+                        collectionPath = `/artifacts/${appId}/sharedAgendas/${window.currentSharedAgendaId}/tasks`;
+                    } else {
+                        console.error("Modo de agenda desconhecido ou ID de agenda compartilhada ausente.");
+                        statusMessageDisplay.textContent = 'Erro: Não foi possível eliminar.';
+                        return;
+                    }
                     await deleteDoc(doc(db, collectionPath, taskId));
                     statusMessageDisplay.textContent = 'Compromisso eliminado com sucesso!';
                 } catch (e) {
@@ -973,6 +1047,87 @@
                     updateUI();
                 });
             }
+
+            // Function to switch back to private agenda
+            function switchToPrivateAgenda() {
+                currentAgendaView = 'private';
+                statusMessageDisplay.textContent = 'A carregar sua agenda pessoal...';
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const privateCollectionPath = `/artifacts/${appId}/users/${userId}/agendaTasks`;
+
+                if (window.currentAgendaListener) {
+                    window.currentAgendaListener(); 
+                }
+
+                window.currentAgendaListener = onSnapshot(collection(db, privateCollectionPath), (snapshot) => {
+                    const fetchedTasks = [];
+                    snapshot.forEach((doc) => {
+                        fetchedTasks.push({ id: doc.id, ...doc.data() });
+                    });
+
+                    if (fetchedTasks.length > 0) {
+                        tasks = fetchedTasks;
+                        statusMessageDisplay.textContent = 'Sua agenda pessoal carregada do Firestore!';
+                    } else {
+                        tasks = [...defaultTasks];
+                        statusMessageDisplay.textContent = 'Firestore pessoal vazio, a carregar dados iniciais.';
+                    }
+                    tasks.sort((a, b) => {
+                        const dateA = new Date(a.date + 'T' + a.startTime);
+                        const dateB = new Date(b.date + 'T' + b.startTime);
+                        return dateA - dateB;
+                    });
+                    updateUI();
+                }, (error) => {
+                    console.error("Erro ao carregar agenda pessoal:", error);
+                    statusMessageDisplay.textContent = `Erro ao carregar agenda pessoal: ${error.message}. A carregar dados iniciais.`;
+                    tasks = [...defaultTasks];
+                    updateUI();
+                });
+            }
+
+            // Function to create/load a shared agenda
+            async function createOrLoadSharedAgenda(sharedId) {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                let agendaIdToUse = sharedId;
+
+                if (!agendaIdToUse) {
+                    agendaIdToUse = crypto.randomUUID(); // Generate new ID if not provided
+                    statusMessageDisplay.textContent = `A criar nova agenda compartilhada com ID: ${agendaIdToUse}...`;
+                } else {
+                    statusMessageDisplay.textContent = `A carregar agenda compartilhada com ID: ${agendaIdToUse}...`;
+                }
+                window.currentSharedAgendaId = agendaIdToUse; // Store for later use
+                currentAgendaView = 'shared';
+
+                const sharedCollectionPath = `/artifacts/${appId}/sharedAgendas/${agendaIdToUse}/tasks`;
+
+                if (window.currentAgendaListener) {
+                    window.currentAgendaListener();
+                }
+
+                window.currentAgendaListener = onSnapshot(collection(db, sharedCollectionPath), (snapshot) => {
+                    const fetchedTasks = [];
+                    snapshot.forEach((doc) => {
+                        fetchedTasks.push({ id: doc.id, ...doc.data() });
+                    });
+
+                    tasks = fetchedTasks; // Shared agendas start empty if new, or load existing
+                    tasks.sort((a, b) => {
+                        const dateA = new Date(a.date + 'T' + a.startTime);
+                        const dateB = new Date(b.date + 'T' + b.startTime);
+                        return dateA - dateB;
+                    });
+                    statusMessageDisplay.textContent = `Agenda compartilhada "${agendaIdToUse}" carregada!`;
+                    updateUI();
+                }, (error) => {
+                    console.error("Erro ao carregar agenda compartilhada:", error);
+                    statusMessageDisplay.textContent = `Erro ao carregar agenda compartilhada: ${error.message}.`;
+                    tasks = [];
+                    updateUI();
+                });
+            }
+
 
             // Category Management Functions
             function populateCategorySelect() {
@@ -1195,6 +1350,23 @@
 
             analyzeWeekBtn.addEventListener('click', analyzeWeek);
             makePublicBtn.addEventListener('click', makeAgendaPublic);
+            
+            // Shared Agenda Buttons
+            createNewSharedAgendaBtn.addEventListener('click', () => {
+                createOrLoadSharedAgenda(null); // Pass null to generate new ID
+            });
+
+            loadSharedAgendaBtn.addEventListener('click', () => {
+                const sharedId = sharedAgendaIdInput.value;
+                if (sharedId) {
+                    createOrLoadSharedAgenda(sharedId);
+                } else {
+                    statusMessageDisplay.textContent = 'Por favor, insira um ID de agenda compartilhada.';
+                }
+            });
+
+            backToPrivateAgendaBtn.addEventListener('click', switchToPrivateAgenda);
+
             viewPublicAgendaBtn.addEventListener('click', () => {
                 viewPublicAgenda(otherUserIdInput.value);
             });
@@ -1303,10 +1475,14 @@
                         const viewMode = urlParams.get('view');
                         const targetUserId = urlParams.get('userId');
                         const filterCategory = urlParams.get('filter');
+                        const sharedAgendaIdFromUrl = urlParams.get('sharedAgendaId'); // New: check for shared agenda ID in URL
 
                         if (viewMode === 'public' && targetUserId) {
                             viewPublicAgenda(targetUserId, filterCategory);
-                        } else {
+                        } else if (sharedAgendaIdFromUrl) { // If shared agenda ID is in URL, load it
+                            createOrLoadSharedAgenda(sharedAgendaIdFromUrl);
+                        }
+                        else {
                             window.currentAgendaListener = onSnapshot(collection(db, privateCollectionPath), (snapshot) => {
                                 const fetchedTasks = [];
                                 snapshot.forEach((doc) => {
