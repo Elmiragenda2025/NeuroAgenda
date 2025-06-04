@@ -1,0 +1,1886 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agenda Interativa Semanal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Slate, Sky, and Neutral Grays -->
+    <!-- Application Structure Plan: A dashboard-style SPA. The core is a visual, Gantt-like timeline for the week, organized by day. This structure was chosen for its intuitive visual feedback on time allocation and schedule density. Key interactions include filtering by category and day, which dynamically update both the timeline and a supplementary task list. A summary donut chart provides an immediate overview of time distribution. This approach turns a static list into an exploratory tool for time management, prioritizing user understanding and quick insights over a simple tabular layout. A new "Manage Appointments" section allows users to add or edit tasks directly, enhancing the application's utility as a planning tool. Data persistence is now handled by Firestore, ensuring changes are saved across sessions and devices. Sharing features allow users to make their agenda public and view others' public agendas. New features include customizable categories, recurring tasks, and AI-powered intelligent scheduling suggestions. -->
+    <!-- Visualization & Content Choices: 
+        - Weekly Schedule (Core Data): Goal: Visualize time blocks. Method: HTML divs positioned absolutely within daily columns, styled with Tailwind. Interaction: Filtering hides/shows tasks. Justification: Superior to a table for at-a- glance understanding of daily structure.
+        - Time Allocation (Summary): Goal: Compare time spent across categories. Method: Donut chart using Chart.js (Canvas). Interaction: Tooltips and clickable legend. Justification: Ideal for showing part-to-whole relationships.
+        - Detailed Task List: Goal: Provide filterable, detailed text info. Method: Dynamically generated HTML list (ul) via JS. Interaction: List content updates based on filters, plus new "Edit" buttons to populate the management form. Justification: Complements the visual timeline with readable details and enables direct task modification.
+        - Follow-ups/Unscheduled: Goal: Separate pending items. Method: Styled HTML card. Justification: Keeps the main timeline clean and focused on scheduled events.
+        - Subtask Generation (LLM): Goal: Expand on task details. Method: Gemini API call for text generation, displayed in a modal. Interaction: Button click on task item. Justification: Enhances planning and task breakdown.
+        - Weekly Analysis (LLM): Goal: Provide high-level insights. Method: Gemini API call for text generation, displayed in a modal. Interaction: Button click. Justification: Offers a strategic overview of the schedule.
+        - Task Management Form: Goal: Allow users to add/update tasks. Method: HTML form with input fields, dropdown, and buttons. Interaction: Submit to add/update, clear to reset, edit buttons populate form. Justification: Provides direct control over schedule data, now integrated with Firestore for persistence.
+        - Sharing Feature: Goal: Allow users to share their agenda. Method: Toggle for public agenda, input for viewing others' public agendas. Interaction: Button clicks trigger Firestore write/read operations to public collections. Justification: Enhances collaboration and visibility.
+        - Customizable Categories: Goal: Allow users to define their own task categories and colors. Method: Form for adding/editing categories, stored in Firestore. Interaction: Dynamic update of category dropdowns and task styling. Justification: Increases personalization and visual clarity.
+        - Recurring Tasks: Goal: Simplify scheduling of repetitive tasks. Method: Form fields for recurrence pattern (daily/weekly), client-side generation of multiple task instances. Justification: Reduces manual data entry for routines.
+        - Intelligent Scheduling (LLM): Goal: Suggest optimal times for new tasks. Method: Button on task form triggers LLM call with current agenda, suggests time/flags conflicts. Justification: Automates planning and conflict resolution.
+        - Search Specific Day: Goal: Find tasks for a particular date. Method: Date input and button to filter task list. Interaction: User inputs date, clicks button, list updates. Justification: Provides quick access to daily details outside weekly view.
+        - Monthly Overview: Goal: Provide a broader monthly context. Method: Display a clickable calendar-like overview with task counts. Interaction: Clicking a day filters the task list to that day. Justification: Offers monthly perspective and intuitive drill-down.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .timeline-container { height: 1080px; /* 18 hours * 60px/hour */ }
+        .chart-container { position: relative; width: 100%; max-width: 400px; margin-left: auto; margin-right: auto; height: 300px; max-height: 400px; }
+        @media (min-width: 768px) { .chart-container { height: 350px; } }
+        .task-block { transition: opacity 0.3s ease-in-out; }
+        .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); }
+        .modal-content { background-color: #fefefe; margin: 15% auto; padding: 20px; border: 1px solid #888; width: 80%; max-width: 600px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); position: relative; }
+        .close-button { color: #aaa; float: right; font-size: 28px; font-weight: bold; }
+        .close-button:hover, .close-button:focus { color: black; text-decoration: none; cursor: pointer; }
+        .loading-spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        /* Confirmation Modal specific styles */
+        .confirm-modal-content {
+            background-color: #fefefe;
+            margin: 10% auto;
+            padding: 25px;
+            border: 1px solid #ddd;
+            width: 90%;
+            max-width: 400px;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+            text-align: center;
+        }
+        .confirm-modal-content h3 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .confirm-modal-content .button-group {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .confirm-modal-content .button-group button {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+        }
+        .confirm-modal-content .button-group button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        /* Monthly View Calendar Styles */
+        .month-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 4px;
+            text-align: center;
+        }
+        .day-header {
+            font-weight: 600;
+            color: #64748b;
+            padding: 4px 0;
+        }
+        .day-cell {
+            padding: 6px 0;
+            border-radius: 6px;
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+            font-size: 0.875rem; /* sm text */
+            position: relative;
+        }
+        .day-cell:hover {
+            background-color: #e2e8f0;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .day-cell.has-tasks {
+            background-color: #dbeafe; /* bg-blue-100 */
+            border-color: #93c5fd; /* border-blue-300 */
+        }
+        .day-cell.current-day {
+            background-color: #bfdbfe; /* bg-blue-200 */
+            border-color: #60a5fa; /* border-blue-400 */
+            font-weight: 700;
+        }
+        .task-count {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            font-size: 0.625rem; /* xs text */
+            font-weight: 600;
+            color: #64748b;
+            background-color: #cbd5e1; /* bg-slate-300 */
+            border-radius: 9999px; /* full rounded */
+            padding: 0 4px;
+            line-height: 1;
+        }
+        .empty-cell {
+            background-color: transparent;
+            border: none;
+            cursor: default;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-screen-xl">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-slate-900">Agenda Interativa Semanal</h1>
+            <p class="text-slate-600 mt-2">03 de Junho de 2025 - 09 de Junho de 2025</p>
+            <p id="user-id-display" class="text-sm text-slate-500 mt-1"></p>
+            <p id="status-message" class="text-sm text-slate-500 mt-1"></p>
+        </header>
+
+        <main>
+            <!-- Navigation / Filters -->
+            <section id="filters" class="mb-8 p-4 bg-white rounded-lg shadow-lg border border-slate-100">
+                <h2 class="text-lg font-semibold mb-3 text-slate-700">Filtros e Ferramentas</h2>
+                <div class="flex flex-wrap gap-3 mb-4">
+                    <button data-filter="all" class="filter-btn bg-sky-600 text-white px-5 py-2 rounded-lg shadow-md hover:bg-sky-700 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">Mostrar Tudo</button>
+                    <button data-filter="Familiar" class="filter-btn bg-white border border-blue-500 text-blue-500 px-5 py-2 rounded-lg shadow-md hover:bg-blue-50 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">Familiar</button>
+                    <button data-filter="Pessoal" class="filter-btn bg-white border border-green-500 text-green-500 px-5 py-2 rounded-lg shadow-md hover:bg-green-50 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">Pessoal</button>
+                    <button data-filter="Ademicon" class="filter-btn bg-white border border-amber-500 text-amber-500 px-5 py-2 rounded-lg shadow-md hover:bg-amber-50 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">Ademicon</button>
+                    <button data-filter="I2 Neurociência" class="filter-btn bg-white border border-purple-500 text-purple-500 px-5 py-2 rounded-lg shadow-md hover:bg-purple-50 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">I2 Neurociência</button>
+                    <button data-filter="Todas" class="filter-btn bg-white border border-slate-500 text-slate-500 px-5 py-2 rounded-lg shadow-md hover:bg-slate-50 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">Todas</button>
+                </div>
+                <div class="flex flex-wrap gap-3 mt-4">
+                    <button id="analyze-week-btn" class="bg-indigo-600 text-white px-5 py-2 rounded-lg shadow-md hover:bg-indigo-700 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex items-center gap-2">
+                        ✨ Analisar Semana
+                    </button>
+                    <button id="reset-view-btn" class="bg-gray-500 text-white px-5 py-2 rounded-lg shadow-md hover:bg-gray-600 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex items-center gap-2">
+                        Voltar para Minha Agenda Completa
+                    </button>
+                </div>
+                <div class="mt-6 border-t border-slate-200 pt-4">
+                    <h3 class="text-lg font-semibold mb-3 text-slate-700">Pesquisar Dia Específico</h3>
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <input type="date" id="search-date-input" class="flex-grow mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2">
+                        <button id="search-day-btn" class="bg-blue-500 text-white px-6 py-2 rounded-lg shadow-md hover:bg-blue-600 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex-shrink-0">
+                            Pesquisar Dia
+                        </button>
+                        <button id="clear-day-search-btn" class="bg-slate-300 text-slate-700 px-6 py-2 rounded-lg shadow-md hover:bg-slate-400 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex-shrink-0 hidden">
+                            Limpar Pesquisa
+                        </button>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Summary & Task List -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+                <div class="lg:col-span-1 bg-white p-6 rounded-lg shadow-lg border border-slate-100">
+                    <h2 class="text-xl font-bold mb-4 text-slate-900">Resumo da Semana</h2>
+                     <p class="text-sm text-slate-600 mb-4">Esta visualização mostra a distribuição do seu tempo planejado entre as diferentes categorias de tarefas. Use os filtros para explorar sua agenda em mais detalhes.</p>
+                    <div class="chart-container">
+                        <canvas id="categoryChart"></canvas>
+                    </div>
+                </div>
+                <div class="lg:col-span-2 bg-white p-6 rounded-lg shadow-lg border border-slate-100">
+                    <h2 class="text-xl font-bold mb-4 text-slate-900">Lista de Tarefas</h2>
+                     <p class="text-sm text-slate-600 mb-4">Aqui estão todas as suas tarefas agendadas. A lista será atualizada dinamicamente à medida que você aplica filtros por categoria. Clique em "Editar" para modificar um compromisso ou "✨ Sugerir Subtarefas" para detalhar uma atividade.</p>
+                    <div id="task-list-container" class="h-96 overflow-y-auto pr-2">
+                        <!-- Task list will be injected here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Monthly Overview Section -->
+            <section id="monthly-overview" class="mt-8 p-6 bg-white rounded-lg shadow-lg border border-slate-100">
+                <h2 class="text-xl font-bold mb-4 text-slate-900">Visão Geral do Mês</h2>
+                <p class="text-sm text-slate-600 mb-4">Visualize a distribuição de tarefas ao longo do mês. Clique num dia para ver os compromissos específicos.</p>
+                <div class="flex justify-between items-center mb-4">
+                    <button id="prev-month-btn" class="bg-gray-200 text-gray-700 px-3 py-1 rounded-lg hover:bg-gray-300 transition">Mês Anterior</button>
+                    <h3 id="current-month-display" class="text-lg font-semibold text-slate-800"></h3>
+                    <button id="next-month-btn" class="bg-gray-200 text-gray-700 px-3 py-1 rounded-lg hover:bg-gray-300 transition">Próximo Mês</button>
+                </div>
+                <div id="calendar-grid" class="month-grid">
+                    <div class="day-header">Dom</div>
+                    <div class="day-header">Seg</div>
+                    <div class="day-header">Ter</div>
+                    <div class="day-header">Qua</div>
+                    <div class="day-header">Qui</div>
+                    <div class="day-header">Sex</div>
+                    <div class="day-header">Sáb</div>
+                    <!-- Calendar days will be injected here -->
+                </div>
+            </section>
+
+            <!-- Weekly Timeline -->
+            <section id="timeline" class="bg-white p-4 md:p-6 rounded-lg shadow-lg border border-slate-100">
+                 <h2 class="text-xl font-bold mb-4 text-center md:text-left text-slate-900">Linha do Tempo Semanal</h2>
+                 <p class="text-sm text-slate-600 mb-6 text-center md:text-left">Visualize a estrutura de cada dia. Os blocos representam suas tarefas, posicionados de acordo com o horário e duração. Passe o mouse sobre um bloco para ver os detalhes.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-px bg-slate-200 border border-slate-200 rounded-md">
+                    <!-- Day columns will be injected here -->
+                </div>
+            </section>
+            
+            <!-- Manage Appointments Section -->
+            <section id="manage-appointments" class="mt-8 p-6 bg-white rounded-lg shadow-lg border border-slate-100">
+                <h2 class="text-xl font-bold mb-4 text-slate-900">Gerenciar Compromissos</h2>
+                <p class="text-sm text-slate-600 mb-4">Adicione um novo compromisso ou edite um existente preenchendo os campos abaixo. Use o botão "Editar" na Lista de Tarefas para preencher automaticamente.</p>
+                <form id="appointment-form" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div>
+                        <label for="activity" class="block text-sm font-medium text-slate-700">Atividade</label>
+                        <input type="text" id="activity" name="activity" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2" required>
+                    </div>
+                    <div>
+                        <label for="date" class="block text-sm font-medium text-slate-700">Data (DD/MM/YYYY)</label>
+                        <input type="date" id="date" name="date" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2" required>
+                    </div>
+                    <div>
+                        <label for="startTime" class="block text-sm font-medium text-slate-700">Hora de Início (HH:MM)</label>
+                        <input type="time" id="startTime" name="startTime" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2" required>
+                    </div>
+                    <div>
+                        <label for="duration" class="block text-sm font-medium text-slate-700">Duração (minutos)</label>
+                        <input type="number" id="duration" name="duration" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2" required min="1">
+                    </div>
+                    <div>
+                        <label for="category" class="block text-sm font-medium text-slate-700">Categoria</label>
+                        <select id="category" name="category" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2" required>
+                            <option value="">Selecione uma categoria</option>
+                            <!-- Default and custom categories will be loaded here -->
+                        </select>
+                    </div>
+                    <!-- Recurrence Fields -->
+                    <div class="col-span-full md:col-span-2 lg:col-span-3">
+                        <label class="flex items-center mt-2">
+                            <input type="checkbox" id="is-recurring" class="form-checkbox h-4 w-4 text-sky-600 rounded">
+                            <span class="ml-2 text-sm text-slate-700">Tarefa Recorrente?</span>
+                        </label>
+                    </div>
+                    <div id="recurrence-options" class="col-span-full md:col-span-2 lg:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4 hidden">
+                        <div>
+                            <label for="recurrence-pattern" class="block text-sm font-medium text-slate-700">Padrão de Recorrência</label>
+                            <select id="recurrence-pattern" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2">
+                                <option value="daily">Diário</option>
+                                <option value="weekly">Semanal</option>
+                            </select>
+                        </div>
+                        <div id="weekly-days" class="hidden">
+                            <label class="block text-sm font-medium text-slate-700">Dias da Semana</label>
+                            <div class="mt-1 grid grid-cols-3 sm:grid-cols-7 gap-2">
+                                <label class="flex items-center text-sm"><input type="checkbox" value="1" class="form-checkbox h-4 w-4 text-sky-600 rounded mr-1"> Seg</label>
+                                <label class="flex items-center text-sm"><input type="checkbox" value="2" class="form-checkbox h-4 w-4 text-sky-600 rounded mr-1"> Ter</label>
+                                <label class="flex items-center text-sm"><input type="checkbox" value="3" class="form-checkbox h-4 w-4 text-sky-600 rounded mr-1"> Qua</label>
+                                <label class="flex items-center text-sm"><input type="checkbox" value="4" class="form-checkbox h-4 w-4 text-sky-600 rounded mr-1"> Qui</label>
+                                <label class="flex items-center text-sm"><input type="checkbox" value="5" class="form-checkbox h-4 w-4 text-sky-600 rounded mr-1"> Sex</label>
+                                <label class="flex items-center text-sm"><input type="checkbox" value="6" class="form-checkbox h-4 w-4 text-sky-600 rounded mr-1"> Sáb</label>
+                                <label class="flex items-center text-sm"><input type="checkbox" value="0" class="form-checkbox h-4 w-4 text-sky-600 rounded mr-1"> Dom</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-span-full md:col-span-2 lg:col-span-3 flex justify-end gap-4 mt-4">
+                        <button type="button" id="suggest-time-btn" class="bg-blue-500 text-white px-6 py-2 rounded-lg shadow-md hover:bg-blue-600 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">
+                            ✨ Sugerir Horário
+                        </button>
+                        <button type="submit" id="submit-appointment-btn" class="bg-sky-600 text-white px-6 py-2 rounded-lg shadow-md hover:bg-sky-700 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">Adicionar Compromisso</button>
+                        <button type="button" id="clear-form-btn" class="bg-slate-200 text-slate-700 px-6 py-2 rounded-lg shadow-md hover:bg-slate-300 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">Limpar Formulário</button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Manage Categories Section -->
+            <section id="manage-categories" class="mt-8 p-6 bg-white rounded-lg shadow-lg border border-slate-100">
+                <h2 class="text-xl font-bold mb-4 text-slate-900">Gerenciar Categorias Personalizadas</h2>
+                <p class="text-sm text-slate-600 mb-4">Crie ou edite suas próprias categorias de tarefas e suas cores.</p>
+                <form id="category-form" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="category-name" class="block text-sm font-medium text-slate-700">Nome da Categoria</label>
+                        <input type="text" id="category-name" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2" required>
+                    </div>
+                    <div>
+                        <label for="category-color" class="block text-sm font-medium text-slate-700">Cor (Hex)</label>
+                        <input type="color" id="category-color" value="#3b82f6" class="mt-1 block w-full h-10 rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-1" required>
+                    </div>
+                    <div class="md:col-span-2 flex justify-end gap-4 mt-4">
+                        <button type="submit" id="add-category-btn" class="bg-green-600 text-white px-6 py-2 rounded-lg shadow-md hover:bg-green-700 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">Adicionar Categoria</button>
+                        <button type="button" id="clear-category-form-btn" class="bg-slate-200 text-slate-700 px-6 py-2 rounded-lg shadow-md hover:bg-slate-300 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">Limpar</button>
+                    </div>
+                </form>
+                <div id="custom-categories-list" class="mt-6 border-t border-slate-200 pt-4">
+                    <h3 class="text-lg font-semibold mb-3 text-slate-700">Suas Categorias</h3>
+                    <ul class="space-y-2">
+                        <!-- Custom categories will be loaded here -->
+                    </ul>
+                </div>
+            </section>
+
+            <!-- Share Agenda Section -->
+            <section id="share-agenda" class="mt-8 p-6 bg-white rounded-lg shadow-lg border border-slate-100">
+                <h2 class="text-xl font-bold mb-4 text-slate-900">Compartilhar Agenda</h2>
+                <p class="text-sm text-slate-600 mb-4">Compartilhe sua agenda ou visualize a agenda pública de outros utilizadores.</p>
+                
+                <div class="mb-6">
+                    <button id="make-public-btn" class="bg-purple-600 text-white px-6 py-2 rounded-lg shadow-md hover:bg-purple-700 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex items-center gap-2">
+                        Tornar minha agenda pública
+                    </button>
+                    <p class="text-xs text-slate-500 mt-2">Ao clicar, uma cópia da sua agenda atual será salva publicamente no Firestore. Outros utilizadores poderão vê-la (mas não editar).</p>
+                </div>
+
+                <div class="mb-6 border-t border-slate-200 pt-6">
+                    <h3 class="text-lg font-semibold mb-3 text-slate-700">Compartilhar Agenda Filtrada</h3>
+                    <p class="text-sm text-slate-600 mb-3">Selecione uma categoria no filtro acima e clique no botão para gerar um link que mostrará apenas as tarefas dessa categoria.</p>
+                    <button id="generate-filtered-link-btn" class="bg-orange-500 text-white px-6 py-2 rounded-lg shadow-md hover:bg-orange-600 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">
+                        Gerar Link de Compartilhamento Filtrado
+                    </button>
+                    <div id="filtered-share-link-container" class="mt-4 hidden">
+                        <input type="text" id="filtered-share-link" class="w-full rounded-md border-gray-300 shadow-sm p-2 text-sm bg-slate-50" readonly>
+                        <button id="copy-filtered-link-btn" class="mt-2 bg-slate-700 text-white px-4 py-2 rounded-lg shadow-md hover:bg-slate-800 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">
+                            Copiar Link
+                        </button>
+                        <p id="copy-feedback" class="text-xs text-green-600 mt-1 hidden">Link copiado!</p>
+                    </div>
+                </div>
+
+                <div class="mb-6 border-t border-slate-200 pt-6">
+                    <h3 class="text-lg font-semibold mb-3 text-slate-700">Partilhar Agenda por Email</h3>
+                    <p class="text-sm text-slate-600 mb-3">Selecione uma data e insira o email do destinatário para enviar os compromissos desse dia.</p>
+                    <div class="flex flex-col sm:flex-row gap-3 items-end">
+                        <div class="flex-grow">
+                            <label for="email-date" class="block text-sm font-medium text-slate-700">Data do Email</label>
+                            <input type="date" id="email-date" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2">
+                        </div>
+                        <div class="flex-grow">
+                            <label for="client-email" class="block text-sm font-medium text-slate-700">Email do Destinatário</label>
+                            <input type="email" id="client-email" placeholder="cliente@exemplo.com" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2">
+                        </div>
+                        <button id="send-email-btn" class="bg-blue-500 text-white px-6 py-2 rounded-lg shadow-md hover:bg-blue-600 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex-shrink-0">
+                            Enviar Email
+                        </button>
+                    </div>
+                    <p id="email-feedback" class="text-xs text-green-600 mt-1 hidden"></p>
+                </div>
+
+                <div>
+                    <label for="other-user-id" class="block text-sm font-medium text-slate-700 mb-2">Ver Agenda Pública de Outro Utilizador</label>
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <input type="text" id="other-user-id" placeholder="ID do Utilizador" class="flex-grow mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2">
+                        <button id="view-public-agenda-btn" class="bg-teal-600 text-white px-6 py-2 rounded-lg shadow-md hover:bg-teal-700 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex-shrink-0">
+                            Ver Agenda
+                        </button>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-2">Insira o ID de um utilizador cuja agenda foi tornada pública para visualizá-la.</p>
+                </div>
+            </section>
+
+            <!-- Manage Shared Agendas Section -->
+            <section id="manage-shared-agendas" class="mt-8 p-6 bg-white rounded-lg shadow-lg border border-slate-100">
+                <h2 class="text-xl font-bold mb-4 text-slate-900">Gerenciar Agendas Compartilhadas</h2>
+                <p class="text-sm text-slate-600 mb-4">Colabore em agendas com sua equipa. Crie uma nova agenda compartilhada ou carregue uma existente.</p>
+                
+                <div class="mb-6">
+                    <button id="create-new-shared-agenda-btn" class="bg-blue-600 text-white px-6 py-2 rounded-lg shadow-md hover:bg-blue-700 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex items-center gap-2">
+                        Criar Nova Agenda Compartilhada
+                    </button>
+                    <p class="text-xs text-slate-500 mt-2">Gera um novo ID para uma agenda que você pode compartilhar com seu sócio.</p>
+                </div>
+
+                <div class="mb-6">
+                    <label for="shared-agenda-id-input" class="block text-sm font-medium text-slate-700 mb-2">Carregar Agenda Compartilhada Existente</label>
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <input type="text" id="shared-agenda-id-input" placeholder="ID da Agenda Compartilhada" class="flex-grow mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 focus:ring-2 sm:text-sm p-2">
+                        <button id="load-shared-agenda-btn" class="bg-teal-600 text-white px-6 py-2 rounded-lg shadow-md hover:bg-teal-700 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex-shrink-0">
+                            Carregar Agenda
+                        </button>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-2">Insira o ID de uma agenda compartilhada para visualizá-la e colaborar.</p>
+                </div>
+
+                <div>
+                    <button id="back-to-private-agenda-btn" class="bg-gray-500 text-white px-6 py-2 rounded-lg shadow-md hover:bg-gray-600 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex items-center gap-2">
+                        Voltar para Minha Agenda Pessoal
+                    </button>
+                    <p class="text-xs text-slate-500 mt-2">Volta para a sua agenda pessoal, onde você pode gerenciar seus compromissos privados.</p>
+                </div>
+            </section>
+
+            <!-- Follow-ups and Unscheduled tasks -->
+            <section id="follow-ups" class="mt-8">
+                 <h2 class="text-xl font-bold mb-4 text-slate-900">Acompanhamentos e Tarefas Pendentes</h2>
+                 <p class="text-sm text-slate-600 mb-4">Esta seção contém itens importantes que precisam de atenção, mas que não estão fixos na linha do tempo ou ocorrem na próxima semana.</p>
+                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div class="bg-white p-5 rounded-lg shadow-md border-l-4 border-sky-500">
+                        <h3 class="font-semibold text-slate-800">Monica Shopping ABC</h3>
+                        <p class="text-sm text-slate-600">Reunião a ser agendada para 04/06/2025.</p>
+                    </div>
+                    <div class="bg-white p-5 rounded-lg shadow-md border-l-4 border-rose-500">
+                        <h3 class="font-semibold text-slate-800">Claudio Serraria</h3>
+                        <p class="text-sm text-slate-600">Reunião agendada para 11/06 às 14h.</p>
+                    </div>
+                    <div class="bg-white p-5 rounded-lg shadow-md border-l-4 border-teal-500">
+                        <h3 class="font-semibold text-slate-800">Projeto Origem</h3>
+                        <p class="text-sm text-slate-600">Formulários enviados para 7 líderes/sócios. Acompanhar respostas em 10/06.</p>
+                    </div>
+                    <div class="bg-white p-5 rounded-lg shadow-md border-l-4 border-amber-500">
+                        <h3 class="font-semibold text-slate-800">Ary Duettos</h3>
+                        <p class="text-sm text-slate-600">Gerente Douglas tentará agendar para a próxima terça (10/06).</p>
+                    </div>
+                     <div class="bg-white p-5 rounded-lg shadow-md border-l-4 border-red-500">
+                        <h3 class="font-semibold text-slate-800">Alexandre Nogueira Ipiranga</h3>
+                        <p class="text-sm text-slate-600">Aguardando resposta.</p>
+                    </div>
+                 </div>
+            </section>
+        </main>
+
+        <footer class="text-center mt-12 py-6 border-t border-slate-200">
+            <p class="text-sm text-slate-500">Agenda gerada em 03 de Junho de 2025.</p>
+        </footer>
+
+    </div>
+
+    <!-- Modal for LLM Responses -->
+    <div id="llm-modal" class="modal">
+        <div class="modal-content rounded-xl shadow-xl">
+            <span class="close-button" id="close-modal-btn">&times;</span>
+            <h3 id="modal-title" class="text-xl font-bold mb-4 text-slate-900"></h3>
+            <div id="modal-loading" class="loading-spinner hidden"></div>
+            <div id="modal-content-area" class="text-slate-700 prose max-w-none"></div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmation-modal" class="modal">
+        <div class="confirm-modal-content">
+            <h3 class="text-lg font-semibold">Deseja mesmo remover este compromisso?</h3>
+            <p class="text-sm text-slate-600 mt-2">Esta ação não pode ser desfeita.</p>
+            <div class="button-group">
+                <button id="confirm-delete-btn" class="bg-red-500 text-white hover:bg-red-600">Sim, Remover</button>
+                <button id="cancel-delete-btn" class="bg-slate-200 text-slate-700 hover:bg-slate-300">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection, query, onSnapshot, serverTimestamp, addDoc, deleteDoc, writeBatch, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables for Firebase and data (initialized later in DOMContentLoaded)
+        let app;
+        let db;
+        let auth;
+        let userId = null;
+        let tasks = []; 
+        let chartInstance = null;
+        let activeFilter = 'all'; 
+        let dateToDayMap = {}; 
+        let editingTaskId = null;
+        let currentAgendaView = 'private'; // 'private' or 'public' or 'shared'
+        let customCategories = []; // Stores user-defined categories
+        let taskToDeleteId = null; // Stores the ID of the task to be deleted
+
+        // Initial default tasks (fallback if Firestore is empty or fails)
+        const defaultTasks = [
+            { id: 't1', activity: 'Café da manhã', date: '2025-06-03', startTime: '06:00', duration: 30, category: 'Familiar' },
+            { id: 't2', activity: 'Levar Miguel à creche', date: '2025-06-03', startTime: '07:20', duration: 10, category: 'Familiar' },
+            { id: 't3', activity: 'Meditação', date: '2025-06-03', startTime: '07:30', duration: 30, category: 'Pessoal' },
+            { id: 't4', activity: 'Preparar para revisita ao Duetos', date: '2025-06-03', startTime: '09:15', duration: 45, category: 'Ademicon' },
+            { id: 't5', activity: 'Revisita ao Duetos', date: '2025-06-03', startTime: '10:00', duration: 120, category: 'Ademicon' },
+            { id: 't6', activity: 'Almoço', date: '2025-06-03', startTime: '12:00', duration: 60, category: 'Pessoal' },
+            { id: 't7', activity: 'Consolidar feedback de visitas a escolas', date: '2025-06-03', startTime: '13:00', duration: 90, category: 'Ademicon' },
+            { id: 't8', activity: 'Pegar Miguel na creche', date: '2025-06-03', startTime: '16:30', duration: 30, category: 'Familiar' },
+            { id: 't9', activity: 'Ficar com Miguel', date: '2025-06-03', startTime: '17:00', duration: 60, category: 'Familiar' },
+            { id: 't10', activity: 'Jantar', date: '2025-06-03', startTime: '18:00', duration: 60, category: 'Familiar' },
+            { id: 't11', activity: 'Tempo com família', date: '2025-06-03', startTime: '19:00', duration: 120, category: 'Familiar' },
+            
+            { id: 't12', activity: 'Café da manhã', date: '2025-06-04', startTime: '06:00', duration: 30, category: 'Familiar' },
+            { id: 't13', activity: 'Levar Miguel à creche', date: '2025-06-04', startTime: '07:20', duration: 10, category: 'Familiar' },
+            { id: 't14', activity: 'Meditação', date: '2025-06-04', startTime: '07:30', duration: 30, category: 'Pessoal' },
+            { id: 't15', activity: 'Caminhada/Corrida', date: '2025-06-04', startTime: '08:00', duration: 75, category: 'Pessoal' },
+            { id: 't16', activity: 'Acertar site e matrícula Cursos Pellegrini', date: '2025-06-04', startTime: '09:15', duration: 105, category: 'I2 Neurociência' },
+            { id: 't17', activity: 'Preparar apresentação para Ipiranga Escola', date: '2025-06-04', startTime: '11:00', duration: 60, category: 'Ademicon' },
+            { id: 't18', activity: 'Almoço', date: '2025-06-04', startTime: '12:00', duration: 60, category: 'Pessoal' },
+            { id: 't19', activity: 'Continuar preparação da apresentação', date: '2025-06-04', startTime: '13:00', duration: 120, category: 'Ademicon' },
+            { id: 't20', activity: 'Pegar Miguel na creche', date: '2025-06-04', startTime: '16:30', duration: 30, category: 'Familiar' },
+            { id: 't21', activity: 'Editar vídeos para Instagram', date: '2025-06-04', startTime: '17:00', duration: 60, category: 'Pessoal' },
+            { id: 't22', activity: 'Jantar', date: '2025-06-04', startTime: '18:00', duration: 60, category: 'Familiar' },
+            { id: 't23', activity: 'Tempo com família', date: '2025-06-04', startTime: '19:00', duration: 120, category: 'Familiar' },
+            { id: 't24', activity: 'Estudo adicional (pós-graduações)', date: '2025-06-04', startTime: '21:40', duration: 50, category: 'Pessoal' },
+            
+            { id: 't25', activity: 'Café da manhã', date: '2025-06-05', startTime: '06:00', duration: 30, category: 'Familiar' },
+            { id: 't26', activity: 'Levar Miguel à creche', date: '2025-06-05', startTime: '07:20', duration: 10, category: 'Familiar' },
+            { id: 't27', activity: 'Meditação', date: '2025-06-05', startTime: '07:30', duration: 30, category: 'Pessoal' },
+            { id: 't28', activity: 'Caminhada/Corrida', date: '2025-06-05', startTime: '08:00', duration: 75, category: 'Pessoal' },
+            { id: 't29', activity: 'Trabalhar em NeuroAccess (personagens dashboard com Sandra)', date: '2025-06-05', startTime: '09:15', duration: 105, category: 'I2 Neurociência' },
+            { id: 't30', activity: 'Seguir com Prefeitura de Petrópolis', date: '2025-06-05', startTime: '11:00', duration: 60, category: 'Ademicon' },
+            { id: 't31', activity: 'Almoço', date: '2025-06-05', startTime: '12:00', duration: 60, category: 'Pessoal' },
+            { id: 't32', activity: 'Criar postagens para redes sociais (I2/Ademicon)', date: '2025-06-05', startTime: '13:00', duration: 90, category: 'I2 Neurociência' },
+            { id: 't33', activity: 'Pegar Miguel na creche', date: '2025-06-05', startTime: '16:30', duration: 30, category: 'Familiar' },
+            { id: 't34', activity: 'Preparar para aulas no Grupo Espírita', date: '2025-06-05', startTime: '17:00', duration: 90, category: 'Pessoal' },
+            { id: 't35', activity: 'Aulas no Grupo Espírita', date: '2025-06-05', startTime: '18:30', duration: 90, category: 'Pessoal' },
+            { id: 't36', activity: 'Jantar e tempo com família', date: '2025-06-05', startTime: '20:00', duration: 60, category: 'Familiar' },
+            
+            { id: 't37', activity: 'Café da manhã', date: '2025-06-06', startTime: '06:00', duration: 30, category: 'Familiar' },
+            { id: 't38', activity: 'Levar Miguel à creche', date: '2025-06-06', startTime: '07:20', duration: 10, category: 'Familiar' },
+            { id: 't39', activity: 'Meditação', date: '2025-06-06', startTime: '07:30', duration: 30, category: 'Pessoal' },
+            { id: 't40', activity: 'Caminhada/Corrida', date: '2025-06-06', startTime: '08:00', duration: 75, category: 'Pessoal' },
+            { id: 't41', activity: 'Finalizar contratações Serraria São José', date: '2025-06-06', startTime: '09:00', duration: 120, category: 'I2 Neurociência' },
+            { id: 't42', activity: 'Dividir entrevistas em shorts (Projeto Shorts)', date: '2025-06-06', startTime: '11:00', duration: 60, category: 'I2 Neurociência' },
+            { id: 't43', activity: 'Almoço', date: '2025-06-06', startTime: '12:00', duration: 60, category: 'Pessoal' },
+            { id: 't44', activity: 'Estudo de cursos menores (PNL)', date: '2025-06-06', startTime: '13:00', duration: 120, category: 'Pessoal' },
+            { id: 't45', activity: 'Encerrar tarefas da semana e planejar próxima semana', date: '2025-06-06', startTime: '15:00', duration: 60, category: 'Todas' },
+            { id: 't46', activity: 'Pegar Miguel na creche', date: '2025-06-06', startTime: '16:30', duration: 30, category: 'Familiar' },
+            { id: 't47', activity: 'Editar vídeos para Instagram', date: '2025-06-06', startTime: '17:00', duration: 60, category: 'Pessoal' },
+            { id: 't48', activity: 'Jantar', date: '2025-06-06', startTime: '18:00', duration: 60, category: 'Familiar' },
+            { id: 't49', activity: 'Tempo com família', date: '2025-06-06', startTime: '19:00', duration: 120, category: 'Familiar' },
+            { id: 't50', activity: 'Estudo adicional (pós-graduações)', date: '2025-06-06', startTime: '21:40', duration: 50, category: 'Pessoal' },
+            
+            { id: 't51', activity: 'Café da manhã', date: '2025-06-07', startTime: '07:00', duration: 30, category: 'Familiar' },
+            { id: 't52', activity: 'Meditação', date: '2025-06-07', startTime: '07:30', duration: 30, category: 'Pessoal' },
+            { id: 't53', activity: 'Caminhada/Corrida', date: '2025-06-07', startTime: '08:00', duration: 75, category: 'Pessoal' },
+            { id: 't54', activity: 'Tempo em família', date: '2025-06-07', startTime: '09:15', duration: 165, category: 'Familiar' },
+            { id: 't55', activity: 'Almoço', date: '2025-06-07', startTime: '12:00', duration: 60, category: 'Pessoal' },
+            { id: 't56', activity: 'Estudo (pós-graduações)', date: '2025-06-07', startTime: '13:00', duration: 120, category: 'Pessoal' },
+            { id: 't57', activity: 'Tempo em família', date: '2025-06-07', startTime: '15:00', duration: 180, category: 'Familiar' },
+            
+            { id: 't58', activity: 'Café da manhã', date: '2025-06-08', startTime: '08:00', duration: 30, category: 'Familiar' },
+            { id: 't59', activity: 'Meditação', date: '2025-06-08', startTime: '07:30', duration: 30, category: 'Pessoal' },
+            { id: 't60', activity: 'Estudo (pós-graduações)', date: '2025-06-08', startTime: '09:00', duration: 60, category: 'Pessoal' },
+            { id: 't61', activity: 'Tempo em família', date: '2025-06-08', startTime: '10:00', duration: 120, category: 'Familiar' },
+            { id: 't62', activity: 'Almoço', date: '2025-06-08', startTime: '12:00', duration: 60, category: 'Pessoal' },
+            { id: 't63', activity: 'Tempo em família', date: '2025-06-08', startTime: '13:00', duration: 180, category: 'Familiar' },
+
+            { id: 't64', activity: 'Café da manhã', date: '2025-06-09', startTime: '06:00', duration: 30, category: 'Familiar' },
+            { id: 't65', activity: 'Levar Miguel à creche', date: '2025-06-09', startTime: '07:20', duration: 10, category: 'Familiar' },
+            { id: 't66', activity: 'Meditação', date: '2025-06-09', startTime: '07:30', duration: 30, category: 'Pessoal' },
+            { id: 't67', activity: 'Almoço', date: '2025-06-09', startTime: '12:00', duration: 60, category: 'Pessoal' },
+            { id: 't68', activity: 'Pegar Miguel na creche', date: '2025-06-09', startTime: '16:30', duration: 30, category: 'Familiar' },
+            { id: 't69', activity: 'Jantar', date: '2025-06-09', startTime: '18:00', duration: 60, category: 'Familiar' },
+            { id: 't70', activity: 'Tempo com família', date: '2025-06-09', startTime: '19:00', duration: 120, category: 'Familiar' },
+        ];
+
+
+        const defaultCategoryColors = { // Renamed to avoid conflict with dynamically updated one
+            'Familiar': '#3b82f6',
+            'Pessoal': '#22c55e',
+            'Ademicon': '#f59e0b',
+            'I2 Neurociência': '#a855f7',
+            'Todas': '#64748b'
+        };
+
+        const defaultCategoryBorders = { // Renamed
+            'Familiar': 'border-blue-500',
+            'Pessoal': 'border-green-500',
+            'Ademicon': 'border-amber-500',
+            'I2 Neurociência': 'border-purple-500',
+            'Todas': 'border-slate-500'
+        };
+        
+        const defaultCategoryText = { // Renamed
+            'Familiar': 'text-blue-800',
+            'Pessoal': 'text-green-800',
+            'Ademicon': 'text-amber-800',
+            'I2 Neurociência': 'text-purple-800',
+            'Todas': 'text-slate-800'
+        };
+
+        const defaultCategoryBgLight = { // Renamed
+            'Familiar': 'bg-blue-50',
+            'Pessoal': 'bg-green-50',
+            'Ademicon': 'bg-amber-50',
+            'I2 Neurociência': 'bg-purple-50',
+            'Todas': 'bg-slate-50'
+        };
+
+        // All UI-related variables and functions are now inside DOMContentLoaded
+        document.addEventListener('DOMContentLoaded', async () => {
+            const daysOfWeek = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado']; 
+            const timelineContainer = document.getElementById('timeline').querySelector('.grid');
+            const taskListContainer = document.getElementById('task-list-container');
+            const llmModal = document.getElementById('llm-modal');
+            const closeModalBtn = document.getElementById('close-modal-btn');
+            const modalTitle = document.getElementById('modal-title');
+            const modalContentArea = document.getElementById('modal-content-area');
+            const modalLoading = document.getElementById('modal-loading');
+            const analyzeWeekBtn = document.getElementById('analyze-week-btn');
+            const userIdDisplay = document.getElementById('user-id-display');
+            const statusMessageDisplay = document.getElementById('status-message');
+            const resetViewBtn = document.getElementById('reset-view-btn'); // New button element
+
+            const appointmentForm = document.getElementById('appointment-form');
+            const activityInput = document.getElementById('activity');
+            const dateInput = document.getElementById('date');
+            const startTimeInput = document.getElementById('startTime');
+            const durationInput = document.getElementById('duration');
+            const categorySelect = document.getElementById('category');
+            const submitAppointmentBtn = document.getElementById('submit-appointment-btn');
+            const clearFormBtn = document.getElementById('clear-form-btn');
+
+            // Recurrence elements
+            const isRecurringCheckbox = document.getElementById('is-recurring');
+            const recurrenceOptionsDiv = document.getElementById('recurrence-options');
+            const recurrencePatternSelect = document.getElementById('recurrence-pattern');
+            const weeklyDaysDiv = document.getElementById('weekly-days');
+            const weeklyDayCheckboxes = weeklyDaysDiv.querySelectorAll('input[type="checkbox"]');
+            const suggestTimeBtn = document.getElementById('suggest-time-btn');
+
+            // Category management elements
+            const categoryForm = document.getElementById('category-form');
+            const categoryNameInput = document.getElementById('category-name');
+            const categoryColorInput = document.getElementById('category-color');
+            const addCategoryBtn = document.getElementById('add-category-btn');
+            const clearCategoryFormBtn = document.getElementById('clear-category-form-btn');
+            const customCategoriesList = document.getElementById('custom-categories-list').querySelector('ul');
+
+
+            // Sharing elements
+            const makePublicBtn = document.getElementById('make-public-btn');
+            const otherUserIdInput = document.getElementById('other-user-id');
+            const viewPublicAgendaBtn = document.getElementById('view-public-agenda-btn');
+            const generateFilteredLinkBtn = document.getElementById('generate-filtered-link-btn');
+            const filteredShareLinkContainer = document.getElementById('filtered-share-link-container');
+            const filteredShareLinkInput = document.getElementById('filtered-share-link');
+            const copyFilteredLinkBtn = document.getElementById('copy-filtered-link-btn');
+            const copyFeedback = document.getElementById('copy-feedback');
+
+            // Shared Agenda Management elements
+            const createNewSharedAgendaBtn = document.getElementById('create-new-shared-agenda-btn');
+            const loadSharedAgendaBtn = document.getElementById('load-shared-agenda-btn');
+            const sharedAgendaIdInput = document.getElementById('shared-agenda-id-input');
+            const backToPrivateAgendaBtn = document.getElementById('back-to-private-agenda-btn');
+
+            // Email Sharing elements
+            const emailDateInput = document.getElementById('email-date');
+            const clientEmailInput = document.getElementById('client-email');
+            const sendEmailBtn = document.getElementById('send-email-btn');
+            const emailFeedback = document.getElementById('email-feedback');
+
+            // Confirmation Modal elements
+            const confirmationModal = document.getElementById('confirmation-modal');
+            const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+            const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+
+            // Search Specific Day elements
+            const searchDateInput = document.getElementById('search-date-input');
+            const searchDayBtn = document.getElementById('search-day-btn');
+            const clearDaySearchBtn = document.getElementById('clear-day-search-btn');
+
+            // Monthly Overview elements
+            const currentMonthDisplay = document.getElementById('current-month-display');
+            const prevMonthBtn = document.getElementById('prev-month-btn');
+            const nextMonthBtn = document.getElementById('next-month-btn');
+            const calendarGrid = document.getElementById('calendar-grid');
+            let currentMonthViewDate = new Date(); // Tracks the month currently displayed in the monthly overview
+
+
+            let currentCategoryColors = { ...defaultCategoryColors };
+            let currentCategoryBorders = { ...defaultCategoryBorders };
+            let currentCategoryText = { ...defaultCategoryText };
+            let currentCategoryBgLight = { ...defaultCategoryBgLight };
+
+            function generateUniqueId() {
+                return 'task_' + Date.now() + Math.random().toString(16).slice(2);
+            }
+
+            function updateUI() {
+                initTimeline();
+                updateTaskList();
+                renderChart();
+                populateCategorySelect();
+                renderCustomCategoriesList();
+                renderMonthlyOverview(currentMonthViewDate); // Update monthly overview
+            }
+
+            function initTimeline() {
+                timelineContainer.innerHTML = '';
+                dateToDayMap = {}; // Re-initialize dateToDayMap here
+                const uniqueDates = [...new Set(tasks.map(task => task.date))].sort();
+                uniqueDates.forEach(dateStr => {
+                    const date = new Date(dateStr + 'T00:00:00');
+                    dateToDayMap[dateStr] = daysOfWeek[date.getDay()];
+                });
+                
+                const dayOrder = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo' ];
+                const sortedDates = uniqueDates.sort((a, b) => {
+                    const dateA = new Date(a + 'T00:00:00'); // Use 'a' directly, it's the date string
+                    const dateB = new Date(b + 'T00:00:00'); // Use 'b' directly, it's the date string
+                    const dayAIndex = dateA.getDay(); // 0 for Sunday, 1 for Monday, etc.
+                    const dayBIndex = dateB.getDay();
+
+                    // Custom sort order: Monday (1) to Sunday (0)
+                    const getCustomDayIndex = (day) => {
+                        if (day === 0) return 7; // Move Sunday to end
+                        return day;
+                    };
+
+                    const customDayA = getCustomDayIndex(dayAIndex);
+                    const customDayB = getCustomDayIndex(dayBIndex);
+
+                    if (customDayA !== customDayB) {
+                        return customDayA - customDayB;
+                    }
+                    return dateA.getTime() - dateB.getTime(); // Sort by time if on same day
+                });
+
+                sortedDates.forEach(dateStr => {
+                    const date = new Date(dateStr + 'T00:00:00');
+                    const dayName = daysOfWeek[date.getDay()];
+                    const formattedDate = date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit'});
+
+                    const dayColumn = document.createElement('div');
+                    dayColumn.className = 'bg-white';
+                    dayColumn.innerHTML = `<div class="p-3 border-b border-slate-200 text-center sticky top-0 bg-white z-10">
+                        <p class="font-semibold text-slate-800">${dayName}</p>
+                        <p class="text-sm text-slate-500">${formattedDate}</p>
+                    </div>`;
+
+                    const dayTimeline = document.createElement('div');
+                    dayTimeline.className = 'relative timeline-container';
+                    dayTimeline.dataset.date = dateStr;
+                    dayColumn.appendChild(dayTimeline);
+                    timelineContainer.appendChild(dayColumn);
+                });
+
+                tasks.forEach(task => {
+                    const [hour, minute] = task.startTime.split(':').map(Number);
+                    const topPosition = (hour - 6) * 60 + minute;
+                    const height = task.duration;
+
+                    const taskBlock = document.createElement('div');
+                    // Use dynamic Tailwind class for background color
+                    const bgColorClass = currentCategoryColors[task.category] ? 
+                                         `bg-[${currentCategoryColors[task.category]}]` : 
+                                         'bg-gray-400';
+                    taskBlock.className = `task-block absolute right-0 left-1.5 p-2 rounded-lg text-white shadow-md cursor-pointer ${bgColorClass}`;
+                    taskBlock.style.top = `${topPosition}px`;
+                    taskBlock.style.height = `${height}px`;
+                    taskBlock.style.opacity = '0.9';
+                    taskBlock.dataset.category = task.category;
+                    taskBlock.dataset.id = task.id;
+                    taskBlock.title = `${task.activity} - ${task.startTime} (${task.duration} min)`;
+                    
+                    if (height > 40) {
+                        taskBlock.innerHTML = `
+                            <p class="font-semibold text-xs">${task.activity}</p>
+                            <p class="text-xs opacity-80">${task.startTime}</p>
+                        `;
+                    } else if (height > 20) {
+                         taskBlock.innerHTML = `<p class="font-semibold text-xs">${task.activity}</p>`;
+                    }
+
+
+                    const parentTimeline = timelineContainer.querySelector(`[data-date="${task.date}"]`);
+                    if (parentTimeline) {
+                        parentTimeline.appendChild(taskBlock);
+                    }
+                });
+            }
+
+            function updateTaskList(specificDate = null) {
+                taskListContainer.innerHTML = '';
+                let tasksToDisplay = tasks;
+
+                if (specificDate) {
+                    tasksToDisplay = tasks.filter(task => task.date === specificDate);
+                    clearDaySearchBtn.classList.remove('hidden');
+                } else if (activeFilter !== 'all') {
+                    tasksToDisplay = tasks.filter(task => task.category === activeFilter);
+                    clearDaySearchBtn.classList.add('hidden'); // Hide if filtering by category
+                } else {
+                    clearDaySearchBtn.classList.add('hidden'); // Hide if showing all and not a specific day search
+                }
+
+
+                tasksToDisplay.sort((a,b) => new Date(a.date + 'T' + a.startTime) - new Date(b.date + 'T' + b.startTime));
+
+                if (tasksToDisplay.length === 0) {
+                    taskListContainer.innerHTML = '<p class="text-slate-500 text-center mt-4">Nenhuma tarefa encontrada para este filtro.</p>';
+                    return;
+                }
+
+                let lastDate = '';
+                tasksToDisplay.forEach(task => {
+                    if (task.date !== lastDate) {
+                        lastDate = task.date;
+                        const dateObj = new Date(task.date + 'T00:00:00');
+                        const dayName = daysOfWeek[dateObj.getDay()];
+                        const formattedDate = dateObj.toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
+                        const dateHeader = document.createElement('h4');
+                        dateHeader.className = 'font-bold text-md text-slate-700 mt-4 mb-2 sticky top-0 bg-white py-1';
+                        dateHeader.textContent = `${dayName}, ${formattedDate}`;
+                        taskListContainer.appendChild(dateHeader);
+                    }
+
+                    const taskItem = document.createElement('div');
+                    // Use dynamic Tailwind classes for border and background light color
+                    const borderColorClass = currentCategoryColors[task.category] ? 
+                                             `border-[${currentCategoryColors[task.category]}]` : 
+                                             'border-gray-400';
+                    const bgColorLightClass = currentCategoryColors[task.category] ? 
+                                              `bg-[${currentCategoryColors[task.category]}]/10` : 
+                                              'bg-gray-50';
+                    const textColorClass = currentCategoryColors[task.category] ? 
+                                           `text-[${currentCategoryColors[task.category]}]` : 
+                                           'text-gray-800';
+
+                    taskItem.className = `p-3 mb-2 rounded-lg border-l-4 flex flex-col sm:flex-row justify-between items-start sm:items-center ${borderColorClass} ${bgColorLightClass} shadow-sm hover:shadow-md transition duration-200 ease-in-out`;
+                    taskItem.innerHTML = `
+                        <div class="mb-2 sm:mb-0">
+                            <p class="font-semibold ${textColorClass}">${task.activity}</p>
+                            <p class="text-sm text-slate-600">${task.startTime} - ${task.duration} min</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs font-medium px-2 py-1 rounded-full ${bgColorLightClass} ${textColorClass}">${task.category}</span>
+                            ${currentAgendaView === 'private' || (currentAgendaView === 'shared' && task.ownerId === userId) ? `
+                            <button data-id="${task.id}" class="edit-task-btn bg-slate-200 text-slate-700 text-xs px-3 py-1 rounded-full hover:bg-slate-300 transition duration-200 ease-in-out transform hover:scale-105 active:scale-95">
+                                Editar
+                            </button>
+                            <button data-id="${task.id}" class="delete-task-btn bg-red-500 text-white text-xs px-3 py-1 rounded-full hover:bg-red-600 transition duration-300 ease-in-out transform hover:scale-105 active:scale-95">
+                                Excluir
+                            </button>
+                            ` : ''}
+                            <button data-activity="${task.activity}" class="suggest-subtasks-btn bg-sky-500 text-white text-xs px-3 py-1 rounded-full hover:bg-sky-600 transition duration-200 ease-in-out transform hover:scale-105 active:scale-95">
+                                ✨ Sugerir Subtarefas
+                            </button>
+                            ${currentAgendaView === 'shared' && task.ownerId ? `<span class="text-xs text-slate-500 ml-1">(${task.ownerId === userId ? 'Eu' : 'Sócio'})</span>` : ''}
+                        </div>
+                    `;
+                    taskListContainer.appendChild(taskItem);
+                });
+
+                document.querySelectorAll('.suggest-subtasks-btn').forEach(button => {
+                    button.addEventListener('click', (event) => {
+                        const activity = event.target.dataset.activity;
+                        generateSubtasks(activity);
+                    });
+                });
+
+                document.querySelectorAll('.edit-task-btn').forEach(button => {
+                    button.addEventListener('click', (event) => {
+                        const taskId = event.target.dataset.id;
+                        populateFormForEdit(taskId);
+                    });
+                });
+
+                document.querySelectorAll('.delete-task-btn').forEach(button => {
+                    button.addEventListener('click', (event) => {
+                        taskToDeleteId = event.target.dataset.id; // Store ID
+                        confirmationModal.style.display = 'block'; // Show confirmation modal
+                    });
+                });
+            }
+            
+            function updateTimelineVisibility() {
+                document.querySelectorAll('.task-block').forEach(block => {
+                    if (activeFilter === 'all' || block.dataset.category === activeFilter) {
+                        block.style.visibility = 'visible';
+                        block.style.opacity = '0.9';
+                    } else {
+                        block.style.visibility = 'hidden';
+                        block.style.opacity = '0';
+                    }
+                });
+            }
+
+            function renderChart() {
+                if (chartInstance) {
+                    chartInstance.destroy();
+                }
+
+                const ctx = document.getElementById('categoryChart').getContext('2d');
+                const categoryTotals = tasks.reduce((acc, task) => {
+                    acc[task.category] = (acc[task.category] || 0) + task.duration;
+                    return acc;
+                }, {});
+
+                const labels = Object.keys(categoryTotals);
+                const data = Object.values(categoryTotals);
+                const backgroundColors = labels.map(label => {
+                    // Use actual hex color from customCategories or default
+                    const customCat = customCategories.find(cat => cat.name === label);
+                    if (customCat) {
+                        return customCat.color;
+                    }
+                    return defaultCategoryColors[label] || '#9ca3af'; // Grey for unknown
+                });
+
+                chartInstance = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Minutos por Categoria',
+                            data: data,
+                            backgroundColor: backgroundColors,
+                            borderColor: '#ffffff',
+                            borderWidth: 2,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                labels: {
+                                     font: {
+                                        family: "'Inter', sans-serif"
+                                    }
+                                }
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        let label = context.label || '';
+                                        if (label) {
+                                            label += ': ';
+                                        }
+                                        if (context.parsed !== null) {
+                                            label += `${context.parsed} minutos`;
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            async function generateSubtasks() {
+                modalTitle.textContent = `Subtarefas para: ${activityInput.value}`;
+                modalContentArea.innerHTML = '';
+                modalLoading.classList.remove('hidden');
+                llmModal.style.display = 'block';
+
+                const activity = activityInput.value;
+
+                if (!activity) {
+                    modalContentArea.textContent = 'Por favor, preencha a Atividade no formulário para sugerir subtarefas.';
+                    modalLoading.classList.add('hidden');
+                    return;
+                }
+
+                const prompt = `Gere uma lista de 3 a 5 subtarefas detalhadas para a seguinte atividade: '${activity}'. Formate a resposta como uma lista numerada.`;
+                let chatHistory = [];
+                chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+                const payload = { contents: chatHistory };
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const result = await response.json();
+                    if (result.candidates && result.candidates.length > 0 &&
+                        result.candidates[0].content && result.candidates[0].content.parts &&
+                        result.candidates[0].content.parts.length > 0) {
+                        const text = result.candidates[0].content.parts[0].text;
+                        modalContentArea.innerHTML = text.replace(/\n/g, '<br>');
+                    } else {
+                        modalContentArea.textContent = 'Não foi possível gerar subtarefas. Tente novamente.';
+                    }
+                } catch (error) {
+                    modalContentArea.textContent = `Erro ao conectar com a API: ${error.message}`;
+                } finally {
+                    modalLoading.classList.add('hidden');
+                }
+            }
+
+            async function analyzeWeek() {
+                modalTitle.textContent = 'Análise da Semana';
+                modalContentArea.innerHTML = '';
+                modalLoading.classList.remove('hidden');
+                llmModal.style.display = 'block';
+
+                let formattedTasks = tasks.map(task => {
+                    return `${task.date} ${task.startTime} - ${task.activity} (${task.duration} min, Categoria: ${task.category})`;
+                }).join('\n');
+
+                const prompt = `Analise a seguinte agenda semanal em Português. Forneça uma análise concisa dos principais focos da semana, identifique os dias mais ocupados, avalie a distribuição de tempo por categoria (Familiar, Pessoal, Ademicon, I2 Neurociência, Outras) e sugira um ponto de atenção ou uma observação geral sobre o equilíbrio da carga de trabalho. Agenda:\n${formattedTasks}`;
+                let chatHistory = [];
+                chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+                const payload = { contents: chatHistory };
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const result = await response.json();
+                    if (result.candidates && result.candidates.length > 0 &&
+                        result.candidates[0].content && result.candidates[0].content.parts &&
+                        result.candidates[0].content.parts.length > 0) {
+                        const text = result.candidates[0].content.parts[0].text;
+                        modalContentArea.innerHTML = text.replace(/\n/g, '<br>');
+                    } else {
+                        modalContentArea.textContent = 'Não foi possível gerar a análise. Tente novamente.';
+                    }
+                } catch (error) {
+                    modalContentarea.textContent = `Erro ao conectar com a API: ${error.message}`;
+                } finally {
+                    modalLoading.classList.add('hidden');
+                }
+            }
+
+            async function suggestOptimalTime() {
+                modalTitle.textContent = 'Sugestão de Horário';
+                modalContentArea.innerHTML = '';
+                modalLoading.classList.remove('hidden');
+                llmModal.style.display = 'block';
+
+                const currentActivity = activityInput.value;
+                const currentDuration = parseInt(durationInput.value);
+                const currentCategory = categorySelect.value;
+                const currentDate = dateInput.value;
+
+                if (!currentActivity || !currentDuration || isNaN(currentDuration) || currentDuration <= 0 || !currentCategory || !currentDate) {
+                    modalContentArea.textContent = 'Por favor, preencha Atividade, Data, Duração e Categoria para obter uma sugestão.';
+                    modalLoading.classList.add('hidden');
+                    return;
+                }
+
+                let formattedTasks = tasks.map(task => {
+                    return `${task.date} ${task.startTime} - ${task.activity} (${task.duration} min, Categoria: ${task.category})`;
+                }).join('\n');
+
+                const prompt = `Dada a seguinte agenda semanal e uma nova tarefa:
+                Tarefa: ${currentActivity}
+                Duração: ${currentDuration} minutos
+                Categoria: ${currentCategory}
+                Data Preferida: ${currentDate}
+
+                Agenda Existente:\n${formattedTasks}
+
+                Sugira o melhor horário de início para esta nova tarefa na data preferida, evitando conflitos com tarefas existentes. Se houver um conflito inevitável, identifique-o e sugira a melhor alternativa ou um aviso. Considere que a agenda começa às 06:00 e termina às 23:30. Responda em Português.`;
+                
+                let chatHistory = [];
+                chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+                const payload = { contents: chatHistory };
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const result = await response.json();
+                    if (result.candidates && result.candidates.length > 0 &&
+                        result.candidates[0].content && result.candidates[0].content.parts &&
+                        result.candidates[0].content.parts.length > 0) {
+                        const text = result.candidates[0].content.parts[0].text;
+                        modalContentArea.innerHTML = text.replace(/\n/g, '<br>');
+                        // Optionally, parse text to extract suggested time and pre-fill startTimeInput
+                        // For simplicity, we just display the text for now.
+                    } else {
+                        modalContentArea.textContent = 'Não foi possível gerar sugestão. Tente novamente.';
+                    }
+                } catch (error) {
+                    modalContentArea.textContent = `Erro ao conectar com a API: ${error.message}`;
+                } finally {
+                    modalLoading.classList.add('hidden');
+                }
+            }
+
+
+            function clearForm() {
+                appointmentForm.reset();
+                submitAppointmentBtn.textContent = 'Adicionar Compromisso';
+                editingTaskId = null;
+                isRecurringCheckbox.checked = false;
+                recurrenceOptionsDiv.classList.add('hidden');
+                weeklyDaysDiv.classList.add('hidden');
+                weeklyDayCheckboxes.forEach(cb => cb.checked = false);
+            }
+
+            function populateFormForEdit(taskId) {
+                const taskToEdit = tasks.find(task => task.id === taskId);
+                if (taskToEdit) {
+                    activityInput.value = taskToEdit.activity;
+                    dateInput.value = taskToEdit.date;
+                    startTimeInput.value = taskToEdit.startTime;
+                    durationInput.value = taskToEdit.duration;
+                    categorySelect.value = taskToEdit.category;
+                    
+                    // Handle recurrence for editing (assuming non-recurring for simplicity on edit for now)
+                    isRecurringCheckbox.checked = false;
+                    recurrenceOptionsDiv.classList.add('hidden');
+                    weeklyDaysDiv.classList.add('hidden');
+                    weeklyDayCheckboxes.forEach(cb => cb.checked = false);
+
+                    submitAppointmentBtn.textContent = 'Atualizar Compromisso';
+                    editingTaskId = taskId;
+                }
+            }
+
+            async function saveTaskToFirestore(task) {
+                statusMessageDisplay.textContent = 'A guardar compromisso...';
+                try {
+                    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                    let collectionPath;
+                    if (currentAgendaView === 'private') {
+                        collectionPath = `/artifacts/${appId}/users/${userId}/agendaTasks`;
+                    } else if (currentAgendaView === 'shared' && window.currentSharedAgendaId) {
+                        collectionPath = `/artifacts/${appId}/sharedAgendas/${window.currentSharedAgendaId}/tasks`;
+                        task.ownerId = userId; // Add ownerId for shared tasks
+                    } else {
+                        console.error("Modo de agenda desconhecido ou ID de agenda compartilhada ausente.");
+                        statusMessageDisplay.textContent = 'Erro: Modo de agenda desconhecido.';
+                        return;
+                    }
+                    
+                    console.log("Firestore Collection Path:", collectionPath);
+                    if (task.id) {
+                        await setDoc(doc(db, collectionPath, task.id), { ...task, timestamp: serverTimestamp() });
+                    } else {
+                        const docRef = await addDoc(collection(db, collectionPath), { ...task, timestamp: serverTimestamp() });
+                        task.id = docRef.id;
+                    }
+                    statusMessageDisplay.textContent = 'Compromisso guardado com sucesso!';
+                } catch (e) {
+                    console.error("Erro ao guardar documento: ", e);
+                    statusMessageDisplay.textContent = `Erro ao guardar compromisso: ${e.message}`;
+                }
+            }
+
+            async function confirmAndDeleteTask() {
+                if (!taskToDeleteId) return; // No task ID stored for deletion
+
+                statusMessageDisplay.textContent = 'A eliminar compromisso...';
+                try {
+                    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                    let collectionPath;
+                    if (currentAgendaView === 'private') {
+                        collectionPath = `/artifacts/${appId}/users/${userId}/agendaTasks`;
+                    } else if (currentAgendaView === 'shared' && window.currentSharedAgendaId) {
+                        collectionPath = `/artifacts/${appId}/sharedAgendas/${window.currentSharedAgendaId}/tasks`;
+                    } else {
+                        console.error("Modo de agenda desconhecido ou ID de agenda compartilhada ausente.");
+                        statusMessageDisplay.textContent = 'Erro: Não foi possível eliminar.';
+                        return;
+                    }
+                    await deleteDoc(doc(db, collectionPath, taskToDeleteId));
+                    statusMessageDisplay.textContent = 'Compromisso eliminado com sucesso!';
+                    taskToDeleteId = null; // Clear stored ID
+                    // Explicitly update UI after successful deletion
+                    updateUI(); 
+                } catch (e) {
+                    console.error("Erro ao eliminar documento: ", e);
+                    statusMessageDisplay.textContent = `Erro ao eliminar compromisso: ${e.message}`;
+                } finally {
+                    confirmationModal.style.display = 'none'; // Hide modal
+                }
+            }
+
+            // Function to make current agenda public
+            async function makeAgendaPublic() {
+                statusMessageDisplay.textContent = 'A tornar agenda pública...';
+                try {
+                    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                    const publicCollectionPath = `/artifacts/${appId}/public/agendaTasks/${userId}`;
+                    const batch = writeBatch(db);
+
+                    // Clear existing public tasks for this user
+                    const publicTasksSnapshot = await getDocs(collection(db, publicCollectionPath)); // Use getDocs for query snapshot
+                    publicTasksSnapshot.forEach(doc => {
+                        batch.delete(doc.ref);
+                    });
+
+                    // Add current private tasks to public collection
+                    tasks.forEach(task => {
+                        const publicDocRef = doc(db, publicCollectionPath, task.id);
+                        batch.set(publicDocRef, { ...task, ownerId: userId, timestamp: serverTimestamp() });
+                    });
+
+                    await batch.commit();
+                    statusMessageDisplay.textContent = 'Agenda tornada pública com sucesso!';
+                } catch (e) {
+                    console.error("Erro ao tornar agenda pública: ", e);
+                    statusMessageDisplay.textContent = `Erro ao tornar agenda pública: ${e.message}`;
+                }
+            }
+
+            // Function to load another user's public agenda
+            function viewPublicAgenda(targetUserId, filterCategory = 'all') {
+                if (!targetUserId) {
+                    statusMessageDisplay.textContent = 'Por favor, insira um ID de utilizador para ver a agenda pública.';
+                    return;
+                }
+                statusMessageDisplay.textContent = `A carregar agenda pública de ${targetUserId}...`;
+                currentAgendaView = 'public'; // Set view mode to public
+                
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const publicCollectionPath = `/artifacts/${appId}/public/agendaTasks/${targetUserId}`;
+                
+                // Detach previous listener if any
+                if (window.currentAgendaListener) {
+                    window.currentAgendaListener(); 
+                }
+
+                window.currentAgendaListener = onSnapshot(collection(db, publicCollectionPath), (snapshot) => {
+                    const fetchedTasks = [];
+                    snapshot.forEach((doc) => {
+                        fetchedTasks.push({ id: doc.id, ...doc.data() });
+                    });
+
+                    if (fetchedTasks.length > 0) {
+                        tasks = fetchedTasks;
+                        statusMessageDisplay.textContent = `Agenda pública de ${targetUserId} carregada!`;
+                    } else {
+                        tasks = []; // No public tasks for this user
+                        statusMessageDisplay.textContent = `Nenhuma agenda pública encontrada para ${targetUserId}.`;
+                    }
+                    tasks.sort((a, b) => {
+                        const dateA = new Date(a.date + 'T' + a.startTime);
+                        const dateB = new Date(b.date + 'T' + b.startTime);
+                        return dateA - dateB;
+                    });
+                    activeFilter = filterCategory; // Apply filter from URL
+                    document.querySelectorAll('.filter-btn').forEach(btn => {
+                        btn.classList.remove('bg-sky-600', 'text-white');
+                        btn.classList.add('bg-white');
+                        if (btn.dataset.filter === activeFilter) {
+                            btn.classList.add('bg-sky-600', 'text-white');
+                        }
+                    });
+                    updateUI();
+                }, (error) => {
+                    console.error("Erro ao carregar agenda pública:", error);
+                    statusMessageDisplay.textContent = `Erro ao carregar agenda pública: ${error.message}.`;
+                    tasks = []; // Clear tasks on error
+                    updateUI();
+                });
+            }
+
+            // Function to switch back to private agenda
+            function switchToPrivateAgenda() {
+                currentAgendaView = 'private';
+                statusMessageDisplay.textContent = 'A carregar sua agenda pessoal...';
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const privateCollectionPath = `/artifacts/${appId}/users/${userId}/agendaTasks`;
+
+                if (window.currentAgendaListener) {
+                    window.currentAgendaListener(); 
+                }
+
+                window.currentAgendaListener = onSnapshot(collection(db, privateCollectionPath), (snapshot) => {
+                    const fetchedTasks = [];
+                    snapshot.forEach((doc) => {
+                        fetchedTasks.push({ id: doc.id, ...doc.data() });
+                    });
+
+                    if (fetchedTasks.length > 0) {
+                        tasks = fetchedTasks;
+                        statusMessageDisplay.textContent = 'Sua agenda pessoal carregada do Firestore!';
+                    } else {
+                        tasks = [...defaultTasks];
+                        statusMessageDisplay.textContent = 'Firestore pessoal vazio, a carregar dados iniciais.';
+                    }
+                    tasks.sort((a, b) => {
+                        const dateA = new Date(a.date + 'T' + a.startTime);
+                        const dateB = new Date(b.date + 'T' + b.startTime);
+                        return dateA - dateB;
+                    });
+                    updateUI();
+                }, (error) => {
+                    console.error("Erro ao carregar agenda pessoal:", error);
+                    statusMessageDisplay.textContent = `Erro ao carregar agenda pessoal: ${error.message}. A carregar dados iniciais.`;
+                    tasks = [...defaultTasks];
+                    updateUI();
+                });
+            }
+
+            // Function to create/load a shared agenda
+            async function createOrLoadSharedAgenda(sharedId) {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                let agendaIdToUse = sharedId;
+
+                if (!agendaIdToUse) {
+                    agendaIdToUse = crypto.randomUUID(); // Generate new ID if not provided
+                    statusMessageDisplay.textContent = `A criar nova agenda compartilhada com ID: ${agendaIdToUse}...`;
+                } else {
+                    statusMessageDisplay.textContent = `A carregar agenda compartilhada com ID: ${agendaIdToUse}...`;
+                }
+                window.currentSharedAgendaId = agendaIdToUse; // Store for later use
+                currentAgendaView = 'shared';
+
+                const sharedCollectionPath = `/artifacts/${appId}/sharedAgendas/${agendaIdToUse}/tasks`;
+
+                if (window.currentAgendaListener) {
+                    window.currentAgendaListener();
+                }
+
+                window.currentAgendaListener = onSnapshot(collection(db, sharedCollectionPath), (snapshot) => {
+                    const fetchedTasks = [];
+                    snapshot.forEach((doc) => {
+                        fetchedTasks.push({ id: doc.id, ...doc.data() });
+                    });
+
+                    tasks = fetchedTasks; // Shared agendas start empty if new, or load existing
+                    tasks.sort((a, b) => {
+                        const dateA = new Date(a.date + 'T' + a.startTime);
+                        const dateB = new Date(b.date + 'T' + b.startTime);
+                        return dateA - dateB;
+                    });
+                    statusMessageDisplay.textContent = `Agenda compartilhada "${agendaIdToUse}" carregada!`;
+                    updateUI();
+                }, (error) => {
+                    console.error("Erro ao carregar agenda compartilhada:", error);
+                    statusMessageDisplay.textContent = `Erro ao carregar agenda compartilhada: ${error.message}.`;
+                    tasks = [];
+                    updateUI();
+                });
+            }
+
+            // Function to send agenda by email
+            function sendAgendaByEmail() {
+                const targetEmail = clientEmailInput.value;
+                const selectedDate = emailDateInput.value;
+
+                if (!targetEmail || !selectedDate) {
+                    emailFeedback.textContent = 'Por favor, preencha o email e selecione a data.';
+                    emailFeedback.classList.remove('hidden', 'text-green-600');
+                    emailFeedback.classList.add('text-red-600');
+                    return;
+                }
+
+                const tasksForDay = tasks.filter(task => task.date === selectedDate);
+                if (tasksForDay.length === 0) {
+                    emailFeedback.textContent = `Nenhum compromisso encontrado para ${new Date(selectedDate).toLocaleDateString('pt-BR')}.`;
+                    emailFeedback.classList.remove('hidden', 'text-green-600');
+                    emailFeedback.classList.add('text-red-600');
+                    return;
+                }
+
+                let emailBody = `Agenda para ${new Date(selectedDate).toLocaleDateString('pt-BR')}:\n\n`;
+                tasksForDay.sort((a, b) => a.startTime.localeCompare(b.startTime)).forEach(task => {
+                    emailBody += `- ${task.startTime} - ${task.activity} (${task.duration} min, Categoria: ${task.category})\n`;
+                });
+
+                const subject = `Agenda do dia ${new Date(selectedDate).toLocaleDateString('pt-BR')}`;
+                const mailtoLink = `mailto:${targetEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody)}`;
+                
+                window.location.href = mailtoLink;
+                emailFeedback.textContent = 'Email enviado para o seu cliente de email!';
+                emailFeedback.classList.remove('hidden', 'text-red-600');
+                emailFeedback.classList.add('text-green-600');
+            }
+
+
+            // Category Management Functions
+            function populateCategorySelect() {
+                categorySelect.innerHTML = '<option value="">Selecione uma categoria</option>';
+                const allCategories = [...Object.keys(defaultCategoryColors), ...customCategories.map(cat => cat.name)];
+                allCategories.forEach(catName => {
+                    const option = document.createElement('option');
+                    option.value = catName;
+                    option.textContent = catName;
+                    categorySelect.appendChild(option);
+                });
+            }
+
+            function renderCustomCategoriesList() {
+                customCategoriesList.innerHTML = '';
+                if (customCategories.length === 0) {
+                    customCategoriesList.innerHTML = '<p class="text-slate-500">Nenhuma categoria personalizada adicionada ainda.</p>';
+                    return;
+                }
+                customCategories.forEach(cat => {
+                    const listItem = document.createElement('li');
+                    listItem.className = `flex justify-between items-center p-2 rounded-md bg-[${cat.color}]/10`;
+                    listItem.innerHTML = `
+                        <div class="flex items-center gap-2">
+                            <span class="inline-block w-4 h-4 rounded-full" style="background-color: ${cat.color};"></span>
+                            <span class="font-medium text-slate-800">${cat.name}</span>
+                        </div>
+                        <button data-id="${cat.id}" class="delete-category-btn text-red-500 hover:text-red-700 transition">
+                            &times;
+                        </button>
+                    `;
+                    customCategoriesList.appendChild(listItem);
+                });
+
+                document.querySelectorAll('.delete-category-btn').forEach(button => {
+                    button.addEventListener('click', (event) => {
+                        const categoryId = event.target.dataset.id;
+                        deleteCustomCategory(categoryId);
+                    });
+                });
+            }
+
+            async function saveCustomCategory(category) {
+                statusMessageDisplay.textContent = 'A guardar categoria...';
+                try {
+                    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                    const collectionPath = `/artifacts/${appId}/users/${userId}/customCategories`;
+                    if (category.id) {
+                        await setDoc(doc(db, collectionPath, category.id), { ...category, timestamp: serverTimestamp() });
+                    } else {
+                        const docRef = await addDoc(collection(db, collectionPath), { ...category, timestamp: serverTimestamp() });
+                        category.id = docRef.id;
+                    }
+                    statusMessageDisplay.textContent = 'Categoria guardada com sucesso!';
+                } catch (e) {
+                    console.error("Erro ao guardar categoria: ", e);
+                    statusMessageDisplay.textContent = `Erro ao guardar categoria: ${e.message}`;
+                }
+            }
+
+            async function deleteCustomCategory(categoryId) {
+                statusMessageDisplay.textContent = 'A eliminar categoria...';
+                try {
+                    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                    const collectionPath = `/artifacts/${appId}/users/${userId}/customCategories`;
+                    await deleteDoc(doc(db, collectionPath, categoryId));
+                    statusMessageDisplay.textContent = 'Categoria eliminada com sucesso!';
+                } catch (e) {
+                    console.error("Erro ao eliminar categoria: ", e);
+                    statusMessageDisplay.textContent = `Erro ao eliminar categoria: ${e.message}`;
+                }
+            }
+
+            // Monthly Overview Functions
+            function renderMonthlyOverview(date) {
+                currentMonthDisplay.textContent = date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                calendarGrid.innerHTML = `
+                    <div class="day-header">Dom</div>
+                    <div class="day-header">Seg</div>
+                    <div class="day-header">Ter</div>
+                    <div class="day-header">Qua</div>
+                    <div class="day-header">Qui</div>
+                    <div class="day-header">Sex</div>
+                    <div class="day-header">Sáb</div>
+                `;
+
+                const year = date.getFullYear();
+                const month = date.getMonth();
+                const firstDayOfMonth = new Date(year, month, 1);
+                const lastDayOfMonth = new Date(year, month + 1, 0);
+                const today = new Date();
+                today.setHours(0,0,0,0); // Normalize today's date
+
+                // Add empty cells for days before the 1st of the month
+                for (let i = 0; i < firstDayOfMonth.getDay(); i++) {
+                    const emptyCell = document.createElement('div');
+                    emptyCell.className = 'day-cell empty-cell';
+                    calendarGrid.appendChild(emptyCell);
+                }
+
+                for (let day = 1; day <= lastDayOfMonth.getDate(); day++) {
+                    const currentDayDate = new Date(year, month, day);
+                    const formattedDate = currentDayDate.toISOString().split('T')[0];
+                    const tasksOnDay = tasks.filter(task => task.date === formattedDate);
+                    const taskCount = tasksOnDay.length;
+
+                    const dayCell = document.createElement('div');
+                    dayCell.className = `day-cell ${taskCount > 0 ? 'has-tasks' : ''} ${currentDayDate.getTime() === today.getTime() ? 'current-day' : ''}`;
+                    dayCell.dataset.date = formattedDate;
+                    dayCell.innerHTML = `
+                        <span>${day}</span>
+                        ${taskCount > 0 ? `<span class="task-count">${taskCount}</span>` : ''}
+                    `;
+                    calendarGrid.appendChild(dayCell);
+
+                    dayCell.addEventListener('click', () => {
+                        searchDateInput.value = formattedDate;
+                        updateTaskList(formattedDate);
+                        activeFilter = 'daySearch'; // Set a special filter mode for day search
+                    });
+                }
+            }
+
+            // Event Listeners
+            appointmentForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+
+                const newActivity = activityInput.value;
+                const newDate = dateInput.value;
+                const newStartTime = startTimeInput.value;
+                const newDuration = parseInt(durationInput.value);
+                const newCategory = categorySelect.value;
+                const isRecurring = isRecurringCheckbox.checked;
+                const recurrencePattern = recurrencePatternSelect.value;
+                const recurrenceDays = Array.from(weeklyDayCheckboxes).filter(cb => cb.checked).map(cb => parseInt(cb.value));
+
+                if (!newActivity || !newDate || !newStartTime || isNaN(newDuration) || newDuration <= 0 || !newCategory) {
+                    statusMessageDisplay.textContent = 'Por favor, preencha todos os campos obrigatórios corretamente.';
+                    return;
+                }
+
+                let tasksToSave = [];
+                if (isRecurring && recurrencePattern === 'daily') {
+                    // Generate tasks for the next 3 months (approx 90 days)
+                    for (let i = 0; i < 90; i++) {
+                        const date = new Date(newDate + 'T00:00:00');
+                        date.setDate(date.getDate() + i);
+                        tasksToSave.push({
+                            id: generateUniqueId(),
+                            activity: newActivity,
+                            date: date.toISOString().split('T')[0],
+                            startTime: newStartTime,
+                            duration: newDuration,
+                            category: newCategory,
+                            isRecurring: true,
+                            recurrencePattern: 'daily'
+                        });
+                    }
+                } else if (isRecurring && recurrencePattern === 'weekly' && recurrenceDays.length > 0) {
+                    // Generate tasks for the next 12 weeks
+                    for (let i = 0; i < 12; i++) {
+                        const startDate = new Date(newDate + 'T00:00:00');
+                        startDate.setDate(startDate.getDate() + (i * 7)); // Move to the start of the next week
+                        
+                        recurrenceDays.forEach(dayIndex => {
+                            const taskDate = new Date(startDate);
+                            taskDate.setDate(taskDate.getDate() + (dayIndex - startDate.getDay() + 7) % 7); // Adjust to correct day of week
+                            
+                            tasksToSave.push({
+                                id: generateUniqueId(),
+                                activity: newActivity,
+                                date: taskDate.toISOString().split('T')[0],
+                                startTime: newStartTime,
+                                duration: newDuration,
+                                category: newCategory,
+                                isRecurring: true,
+                                recurrencePattern: 'weekly',
+                                recurrenceDays: recurrenceDays
+                            });
+                        });
+                    }
+                } else {
+                    tasksToSave.push({
+                        id: editingTaskId || generateUniqueId(),
+                        activity: newActivity,
+                        date: newDate,
+                        startTime: newStartTime,
+                        duration: newDuration,
+                        category: newCategory,
+                        isRecurring: false
+                    });
+                }
+
+                // Save all generated tasks
+                for (const task of tasksToSave) {
+                    await saveTaskToFirestore(task);
+                }
+                clearForm();
+            });
+
+            clearFormBtn.addEventListener('click', clearForm);
+
+            // Recurrence visibility logic
+            isRecurringCheckbox.addEventListener('change', () => {
+                if (isRecurringCheckbox.checked) {
+                    recurrenceOptionsDiv.classList.remove('hidden');
+                    if (recurrencePatternSelect.value === 'weekly') {
+                        weeklyDaysDiv.classList.remove('hidden');
+                    }
+                } else {
+                    recurrenceOptionsDiv.classList.add('hidden');
+                    weeklyDaysDiv.classList.add('hidden');
+                }
+            });
+
+            recurrencePatternSelect.addEventListener('change', () => {
+                if (recurrencePatternSelect.value === 'weekly') {
+                    weeklyDaysDiv.classList.remove('hidden');
+                } else {
+                    weeklyDaysDiv.classList.add('hidden');
+                }
+            });
+
+            suggestTimeBtn.addEventListener('click', suggestOptimalTime);
+
+            // Category Form Listeners
+            categoryForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const categoryName = categoryNameInput.value;
+                const categoryColor = categoryColorInput.value;
+
+                if (!categoryName || !categoryColor) {
+                    statusMessageDisplay.textContent = 'Por favor, preencha o nome e a cor da categoria.';
+                    return;
+                }
+                await saveCustomCategory({ name: categoryName, color: categoryColor });
+                categoryForm.reset();
+                categoryColorInput.value = '#3b82f6'; // Reset color picker default
+            });
+
+            clearCategoryFormBtn.addEventListener('click', () => {
+                categoryForm.reset();
+                categoryColorInput.value = '#3b82f6';
+            });
+
+
+            document.querySelectorAll('.filter-btn').forEach(button => {
+                button.addEventListener('click', () => {
+                    activeFilter = button.dataset.filter;
+                    document.querySelectorAll('.filter-btn').forEach(btn => {
+                        btn.classList.remove('bg-sky-600', 'text-white');
+                        btn.classList.add('bg-white');
+                    });
+                    button.classList.add('bg-sky-600', 'text-white');
+
+                    searchDateInput.value = ''; // Clear specific day search
+                    updateTimelineVisibility();
+                    updateTaskList();
+                });
+            });
+
+            closeModalBtn.addEventListener('click', () => {
+                llmModal.style.display = 'none';
+            });
+
+            window.addEventListener('click', (event) => {
+                if (event.target === llmModal) {
+                    llmModal.style.display = 'none';
+                }
+            });
+
+            analyzeWeekBtn.addEventListener('click', analyzeWeek);
+            resetViewBtn.addEventListener('click', () => { // New listener for the reset button
+                activeFilter = 'all'; // Clear any category filter
+                document.querySelectorAll('.filter-btn').forEach(btn => { // Reset filter button styling
+                    btn.classList.remove('bg-sky-600', 'text-white');
+                    btn.classList.add('bg-white');
+                    if (btn.dataset.filter === 'all') {
+                        btn.classList.add('bg-sky-600', 'text-white');
+                    }
+                });
+                searchDateInput.value = ''; // Clear specific day search
+                switchToPrivateAgenda(); // Ensure we are on the private agenda view
+            });
+            makePublicBtn.addEventListener('click', makeAgendaPublic);
+            
+            // Shared Agenda Buttons
+            createNewSharedAgendaBtn.addEventListener('click', () => {
+                createOrLoadSharedAgenda(null); // Pass null to generate new ID
+            });
+
+            loadSharedAgendaBtn.addEventListener('click', () => {
+                const sharedId = sharedAgendaIdInput.value;
+                if (sharedId) {
+                    createOrLoadSharedAgenda(sharedId);
+                } else {
+                    statusMessageDisplay.textContent = 'Por favor, insira um ID de agenda compartilhada.';
+                }
+            });
+
+            backToPrivateAgendaBtn.addEventListener('click', switchToPrivateAgenda);
+
+            viewPublicAgendaBtn.addEventListener('click', () => {
+                viewPublicAgenda(otherUserIdInput.value);
+            });
+
+            generateFilteredLinkBtn.addEventListener('click', () => {
+                if (!userId) {
+                    copyFeedback.textContent = 'Faça login para gerar links de compartilhamento.';
+                    copyFeedback.classList.remove('hidden', 'text-green-600');
+                    copyFeedback.classList.add('text-red-600');
+                    return;
+                }
+                if (activeFilter === 'all') {
+                    copyFeedback.textContent = 'Selecione uma categoria para filtrar antes de gerar o link.';
+                    copyFeedback.classList.remove('hidden', 'text-green-600');
+                    copyFeedback.classList.add('text-red-600');
+                    return;
+                }
+
+                const baseUrl = window.location.origin + window.location.pathname;
+                const filteredLink = `${baseUrl}?view=public&userId=${userId}&filter=${encodeURIComponent(activeFilter)}`;
+                filteredShareLinkInput.value = filteredLink;
+                filteredShareLinkContainer.classList.remove('hidden');
+                copyFeedback.classList.add('hidden'); // Hide previous feedback
+            });
+
+            copyFilteredLinkBtn.addEventListener('click', () => {
+                filteredShareLinkInput.select();
+                document.execCommand('copy');
+                copyFeedback.textContent = 'Link copiado!';
+                copyFeedback.classList.remove('hidden', 'text-red-600');
+                copyFeedback.classList.add('text-green-600');
+            });
+
+            sendEmailBtn.addEventListener('click', sendAgendaByEmail); // New listener for email button
+
+            // Confirmation Modal Listeners
+            confirmDeleteBtn.addEventListener('click', confirmAndDeleteTask);
+            cancelDeleteBtn.addEventListener('click', () => {
+                confirmationModal.style.display = 'none'; // Hide modal
+                taskToDeleteId = null; // Clear stored ID
+            });
+            window.addEventListener('click', (event) => {
+                if (event.target === confirmationModal) {
+                    confirmationModal.style.display = 'none';
+                    taskToDeleteId = null;
+                }
+            });
+
+            // Search Specific Day Listeners
+            searchDayBtn.addEventListener('click', () => {
+                const dateToSearch = searchDateInput.value;
+                if (dateToSearch) {
+                    updateTaskList(dateToSearch); // Filter tasks list by this date
+                    activeFilter = 'daySearch'; // Indicate that a day search is active
+                } else {
+                    statusMessageDisplay.textContent = 'Por favor, selecione uma data para pesquisar.';
+                }
+            });
+
+            clearDaySearchBtn.addEventListener('click', () => {
+                searchDateInput.value = '';
+                activeFilter = 'all'; // Reset filter
+                updateTaskList(); // Show all tasks again
+            });
+
+            // Monthly Overview Listeners
+            prevMonthBtn.addEventListener('click', () => {
+                currentMonthViewDate.setMonth(currentMonthViewDate.getMonth() - 1);
+                renderMonthlyOverview(currentMonthViewDate);
+            });
+
+            nextMonthBtn.addEventListener('click', () => {
+                currentMonthViewDate.setMonth(currentMonthViewDate.getMonth() + 1);
+                renderMonthlyOverview(currentMonthViewDate);
+            });
+
+
+            // Firebase Initialization and Data Loading
+            statusMessageDisplay.textContent = 'A carregar agenda...';
+            try {
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+                console.log("Firebase Config:", firebaseConfig); // Debugging line
+
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                if (typeof __initial_auth_token !== 'undefined') {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                    console.log("Autenticado com token personalizado.");
+                } else {
+                    await signInAnonymously(auth);
+                    console.log("Autenticado anonimamente.");
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        userIdDisplay.textContent = `ID do Utilizador: ${userId}`;
+                        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                        const privateCollectionPath = `/artifacts/${appId}/users/${userId}/agendaTasks`;
+                        const customCategoriesCollectionPath = `/artifacts/${appId}/users/${userId}/customCategories`;
+                        console.log("Firestore Private Collection Path (onAuthStateChanged):", privateCollectionPath); // Debugging line
+
+                        // Listener for Custom Categories
+                        onSnapshot(collection(db, customCategoriesCollectionPath), (snapshot) => {
+                            customCategories = [];
+                            snapshot.forEach(doc => {
+                                customCategories.push({ id: doc.id, ...doc.data() });
+                            });
+                            // Update color maps based on custom categories
+                            // Tailwind JIT needs explicit values for dynamic colors, so we'll use inline style or a utility class generator
+                            // For simplicity and direct application, we'll store hex values in currentCategoryColors and use inline style
+                            // or generate a class that Tailwind can process.
+                            // For now, we'll ensure currentCategoryColors holds hex values directly for Chart.js and inline styles.
+                            // For filter buttons, they use pre-defined Tailwind classes based on default colors.
+                            Object.assign(currentCategoryColors, defaultCategoryColors); // Start with defaults
+                            Object.assign(currentCategoryBorders, defaultCategoryBorders);
+                            Object.assign(currentCategoryText, defaultCategoryText);
+                            Object.assign(currentCategoryBgLight, defaultCategoryBgLight);
+
+                            customCategories.forEach(cat => {
+                                const hexColor = cat.color; // Assuming cat.color is already a hex string
+                                currentCategoryColors[cat.name] = hexColor; // For Chart.js and direct style
+                                // For Tailwind classes, we need to ensure they are explicitly defined or JIT can find them.
+                                // Directly using `bg-[${hexColor}]` works with JIT if the hex is known at compile time or via safelist.
+                                // For truly dynamic, we'll stick to inline styles where needed or pre-define a large set of classes.
+                                // For this project, we'll use inline styles for the dynamic parts of task blocks/list items.
+                                // For filter buttons, they use pre-defined Tailwind classes based on default colors.
+                                currentCategoryBorders[cat.name] = `border-[${hexColor}]`;
+                                currentCategoryText[cat.name] = `text-[${hexColor}]`;
+                                currentCategoryBgLight[cat.name] = `bg-[${hexColor}]`; // Use full color for bg-light, then apply opacity in HTML/CSS
+                            });
+                            updateUI(); // Re-render UI after categories are loaded
+                        }, (error) => {
+                            console.error("Erro ao carregar categorias personalizadas:", error);
+                            statusMessageDisplay.textContent = `Erro ao carregar categorias: ${error.message}.`;
+                        });
+
+
+                        // Initial listener for the user's private agenda
+                        // Detach previous listener if any
+                        if (window.currentAgendaListener) {
+                            window.currentAgendaListener(); 
+                        }
+
+                        // Check URL for public view parameters
+                        const urlParams = new URLSearchParams(window.location.search);
+                        const viewMode = urlParams.get('view');
+                        const targetUserId = urlParams.get('userId');
+                        const filterCategory = urlParams.get('filter');
+                        const sharedAgendaIdFromUrl = urlParams.get('sharedAgendaId'); // New: check for shared agenda ID in URL
+
+                        if (viewMode === 'public' && targetUserId) {
+                            viewPublicAgenda(targetUserId, filterCategory);
+                        } else if (sharedAgendaIdFromUrl) { // If shared agenda ID is in URL, load it
+                            createOrLoadSharedAgenda(sharedAgendaIdFromUrl);
+                        }
+                        else {
+                            window.currentAgendaListener = onSnapshot(collection(db, privateCollectionPath), (snapshot) => {
+                                const fetchedTasks = [];
+                                snapshot.forEach((doc) => {
+                                    fetchedTasks.push({ id: doc.id, ...doc.data() });
+                                });
+
+                                if (fetchedTasks.length > 0) {
+                                    tasks = fetchedTasks;
+                                    statusMessageDisplay.textContent = 'Agenda carregada do Firestore!';
+                                } else {
+                                    tasks = [...defaultTasks]; // Load default tasks if Firestore is empty
+                                    statusMessageDisplay.textContent = 'Firestore vazio, a carregar dados iniciais.';
+                                }
+                                // Sort tasks by date and time after fetching
+                                tasks.sort((a, b) => {
+                                    const dateA = new Date(a.date + 'T' + a.startTime);
+                                    const dateB = new Date(b.date + 'T' + b.startTime);
+                                    return dateA - dateB;
+                                });
+                                currentAgendaView = 'private'; // Ensure view mode is private when loading own data
+                                updateUI();
+                            }, (error) => {
+                                console.error("Erro ao carregar dados do Firestore:", error);
+                                statusMessageDisplay.textContent = `Erro ao carregar agenda: ${error.message}. A carregar dados iniciais.`;
+                                tasks = [...defaultTasks]; // Fallback to default tasks on error
+                                currentAgendaView = 'private';
+                                updateUI();
+                            });
+                        }
+                    } else {
+                        console.log("Nenhum utilizador autenticado. A carregar dados iniciais.");
+                        userId = crypto.randomUUID(); // Fallback for unauthenticated user (not for Firestore access)
+                        userIdDisplay.textContent = `ID do Utilizador (Anónimo): ${userId}`;
+                        tasks = [...defaultTasks]; // Load default tasks if no user is authenticated
+                        statusMessageDisplay.textContent = 'Não autenticado, a carregar dados iniciais.';
+                        currentAgendaView = 'private';
+                        updateUI();
+                    }
+                });
+
+            } catch (error) {
+                console.error("Erro ao inicializar Firebase ou carregar dados:", error);
+                statusMessageDisplay.textContent = `Erro grave ao iniciar a aplicação: ${error.message}. A carregar dados iniciais.`;
+                tasks = [...defaultTasks]; // Final fallback on initialization error
+                currentAgendaView = 'private';
+                updateUI();
+            }
+        });
+    </script>
+
+</body>
+</html>
